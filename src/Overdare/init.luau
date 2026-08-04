@@ -48,6 +48,8 @@ export type FRPFrame = {
 export type FRPSignalOptions = {
 	map: ((...any) -> any)?,
 	label: string?,
+	maxPending: number?,
+	onOverflow: ((any) -> ())?,
 }
 
 export type FRPDriverOptions = {
@@ -405,6 +407,14 @@ function FRPDriver:eventFromSignal(signal: any, options: FRPSignalOptions?): (an
 	if options.map ~= nil and type(options.map) ~= "function" then
 		error("eventFromSignal map must be a function", 2)
 	end
+	if options.maxPending ~= nil
+		and (type(options.maxPending) ~= "number" or options.maxPending < 1 or options.maxPending % 1 ~= 0)
+	then
+		error("eventFromSignal maxPending must be a positive integer", 2)
+	end
+	if options.onOverflow ~= nil and type(options.onOverflow) ~= "function" then
+		error("eventFromSignal onOverflow must be a function", 2)
+	end
 
 	local event, fire = self._host:source({ label = options.label })
 	self._nextBindingId += 1
@@ -413,6 +423,7 @@ function FRPDriver:eventFromSignal(signal: any, options: FRPSignalOptions?): (an
 		_active = true,
 		_driver = self,
 		_connection = nil,
+		_pendingCount = 0,
 	}
 
 	function binding:dispose()
@@ -429,6 +440,7 @@ function FRPDriver:eventFromSignal(signal: any, options: FRPSignalOptions?): (an
 			end
 		end
 		driver._pending = retained
+		self._pendingCount = 0
 		local connection = self._connection
 		self._connection = nil
 		if connection ~= nil then
@@ -441,6 +453,20 @@ function FRPDriver:eventFromSignal(signal: any, options: FRPSignalOptions?): (an
 
 	local function receive(...: any)
 		if self._disposed or not binding._active then
+			return
+		end
+		if options.maxPending ~= nil and binding._pendingCount >= options.maxPending then
+			if options.onOverflow ~= nil then
+				local ok, message = runSynchronous(options.onOverflow, {
+					bindingId = binding._id,
+					maxPending = options.maxPending,
+					phase = self._phase,
+					droppedCount = 1,
+				})
+				if not ok then
+					self:_handleError(message, "signal-overflow-hook", 1)
+				end
+			end
 			return
 		end
 		local arguments = packArguments(...)
@@ -462,6 +488,7 @@ function FRPDriver:eventFromSignal(signal: any, options: FRPSignalOptions?): (an
 			fire = fire,
 			value = value,
 		}
+		binding._pendingCount += 1
 	end
 
 	binding._connection = connectSignal(signal, receive)
@@ -509,6 +536,9 @@ function FRPDriver:_flush(arguments: any)
 	end)
 	if not timingOk then
 		local droppedCount = #self._pending
+		for _, entry in ipairs(self._pending) do
+			entry.binding._pendingCount = math.max(0, entry.binding._pendingCount - 1)
+		end
 		self._pending = {}
 		self:_handleError(timing, "clock", droppedCount)
 		return
@@ -517,6 +547,9 @@ function FRPDriver:_flush(arguments: any)
 	local time = timing.time
 	if type(time) ~= "number" or not isFinite(time) or time <= currentTime then
 		local droppedCount = #self._pending
+		for _, entry in ipairs(self._pending) do
+			entry.binding._pendingCount = math.max(0, entry.binding._pendingCount - 1)
+		end
 		self._pending = {}
 		self:_handleError("FRP driver time must be finite and strictly increasing", "clock", droppedCount)
 		return
@@ -524,6 +557,9 @@ function FRPDriver:_flush(arguments: any)
 
 	local pending = self._pending
 	self._pending = {}
+	for _, entry in ipairs(pending) do
+		entry.binding._pendingCount = math.max(0, entry.binding._pendingCount - 1)
+	end
 	local frameValue: FRPFrame = {
 		phase = self._phase,
 		time = time,
@@ -1601,6 +1637,990 @@ function Overdare.createClientPrediction(options: any): any
 	end
 	return adapter
 end
+
+-- -------------------------------------------------------------------------
+-- FRP-native multiplayer RemoteEvent adapter
+-- -------------------------------------------------------------------------
+
+local NETWORK_MODULE = nil
+
+local function copyRemoteTable(value: any): any
+	local result = {}
+	for key, child in pairs(value) do
+		result[key] = child
+	end
+	return result
+end
+
+local function loadNetworkModule(): any
+	if NETWORK_MODULE ~= nil then
+		return NETWORK_MODULE
+	end
+	if script ~= nil then
+		NETWORK_MODULE = require(script.Parent.Network)
+		return NETWORK_MODULE
+	end
+	local attempts = {
+		"../Network",
+		"./Network",
+		"../src/Network",
+		"./src/Network",
+	}
+	local messages = {}
+	for _, path in ipairs(attempts) do
+		local ok, module = pcall(require, path)
+		if ok then
+			NETWORK_MODULE = module
+			return module
+		end
+		messages[#messages + 1] = tostring(module)
+	end
+	error("Overdare FRP RemoteEvent adapter could not load Network: " .. table.concat(messages, " | "), 0)
+end
+
+local function assertFRPDriver(driver: any, operation: string)
+	assert(type(driver) == "table", operation .. " requires an FRP driver")
+	assert(type(driver.eventFromSignal) == "function", operation .. " driver must implement :eventFromSignal()")
+	assert(type(driver.frames) == "function", operation .. " driver must implement :frames()")
+end
+
+local function defaultClientId(player: any): any
+	local userId = readMember(player, "UserId")
+	if type(userId) == "number"
+		and isFinite(userId)
+		and userId >= 0
+		and userId % 1 == 0
+	then
+		return userId
+	end
+	if type(userId) == "string" and userId ~= "" then
+		return userId
+	end
+	error("RemoteEvent Player must expose a stable non-negative UserId, or options.getClientId must be provided", 2)
+end
+
+local function isStableRemoteClientId(value: any): boolean
+	if type(value) == "string" then
+		return value ~= ""
+	end
+	return type(value) == "number" and isFinite(value) and value >= 0 and value % 1 == 0
+end
+
+local function sessionStateKey(clientId: any, generation: number): string
+	return type(clientId) .. ":" .. tostring(clientId) .. "#" .. tostring(generation)
+end
+
+local function resolveRemoteSignal(remoteEvent: any, name: string, injected: any): any
+	local signal = injected or readMember(remoteEvent, name)
+	assert(signal ~= nil, "RemoteEvent must expose " .. name .. " (or an explicit signal)")
+	return signal
+end
+
+local function resolvePlayersService(options: any): any
+	if options.players ~= nil then
+		return options.players
+	end
+	if type(options.getPlayersService) == "function" then
+		local ok, players = runSynchronous(options.getPlayersService)
+		assert(ok and players ~= nil, "getPlayersService must synchronously return Players")
+		return players
+	end
+	local serviceProvider = options.game
+	if serviceProvider == nil then
+		serviceProvider = game
+	end
+	if serviceProvider == nil then
+		return nil
+	end
+	local getService = readMember(serviceProvider, "GetService") or readMember(serviceProvider, "getService")
+	if type(getService) ~= "function" then
+		return nil
+	end
+	local ok, players = runSynchronous(getService, serviceProvider, "Players")
+	if ok then
+		return players
+	end
+	return nil
+end
+
+local function newAdapterSignal(): any
+	local signal = { _listeners = {} }
+	function signal:Connect(callback: any): any
+		local entry = { callback = callback, connected = true }
+		self._listeners[#self._listeners + 1] = entry
+		local connection = {}
+		function connection:Disconnect()
+			entry.connected = false
+		end
+		connection.disconnect = connection.Disconnect
+		connection.dispose = connection.Disconnect
+		return connection
+	end
+	function signal:Fire(value: any)
+		for _, entry in ipairs(self._listeners) do
+			if entry.connected then
+				entry.callback(value)
+			end
+		end
+	end
+	return signal
+end
+
+local function invokeTransport(callback: any, label: string, ...: any): (boolean, any)
+	if type(callback) ~= "function" then
+		return false, label .. " transport method is unavailable"
+	end
+	local ok, result = runSynchronous(callback, ...)
+	if not ok then
+		return false, label .. " failed: " .. tostring(result)
+	end
+	return true, result
+end
+
+local function remoteMethod(remoteEvent: any, names: { string }): any
+	for _, name in ipairs(names) do
+		local method = readMember(remoteEvent, name)
+		if type(method) == "function" then
+			return function(...: any)
+				return method(remoteEvent, ...)
+			end
+		end
+	end
+	return nil
+end
+
+local function callOptionalHook(channel: any, hook: any, value: any, label: string)
+	if type(hook) ~= "function" then
+		return
+	end
+	local ok, message = runSynchronous(hook, value)
+	if not ok then
+		channel._lastHookError = label .. " failed: " .. tostring(message)
+	end
+end
+
+local function normalizeFRPRemoteArguments(remoteEvent: any, options: any): (any, any)
+	if options == nil and type(remoteEvent) == "table"
+		and (remoteEvent.remoteEvent ~= nil or remoteEvent.remote ~= nil or remoteEvent.transport ~= nil)
+	then
+		options = remoteEvent
+		remoteEvent = options.remoteEvent or options.remote or options.transport
+	end
+	options = options or {}
+	assert(type(options) == "table", "FRP RemoteEvent adapter options must be a table")
+	remoteEvent = remoteEvent or options.remoteEvent or options.remote or options.transport
+	assert(remoteEvent ~= nil, "FRP RemoteEvent adapter requires a RemoteEvent-like transport")
+	return remoteEvent, options
+end
+
+local FRPServerRemote = {}
+FRPServerRemote.__index = FRPServerRemote
+
+function FRPServerRemote:_recordStatus(status: any)
+	self._lastStatus = status
+	callOptionalHook(self, self._options.onStatus, status, "onStatus")
+	if status.ok == false then
+		callOptionalHook(self, self._options.onViolation, status, "onViolation")
+	end
+end
+
+function FRPServerRemote:_sendPacket(clientId: any, packet: any): any
+	if self._disposed then
+		return { ok = false, code = "disposed", message = "server RemoteEvent channel is disposed" }
+	end
+	local player = self._players[clientId]
+	if player == nil then
+		return { ok = false, code = "unknown_client", message = "no live Player is registered for clientId" }
+	end
+	local ok, message = invokeTransport(self._fireClient, "FireClient", player, packet)
+	if not ok then
+		local status = { ok = false, code = "transport_error", message = message, clientId = clientId }
+		self:_recordStatus(status)
+		return status
+	end
+	return { ok = true, code = "sent", clientId = clientId, packet = packet }
+end
+
+function FRPServerRemote:_clientId(target: any): (any, any)
+	if self._disposed then
+		return nil, { ok = false, code = "disposed", message = "server RemoteEvent channel is disposed" }
+	end
+	if self._players[target] ~= nil then
+		return target, self._players[target]
+	end
+	local ok, clientId = runSynchronous(self._getClientId, target)
+	if not ok or not isStableRemoteClientId(clientId) then
+		return nil, { ok = false, code = "invalid_client", message = tostring(clientId) }
+	end
+	self._players[clientId] = target
+	return clientId, target
+end
+
+function FRPServerRemote:arrivals(): any
+	return self._arrivals
+end
+
+function FRPServerRemote:intents(): any
+	return self._intents
+end
+
+function FRPServerRemote:violations(): any
+	return self._violations
+end
+
+function FRPServerRemote:disconnects(): any
+	return self._disconnects
+end
+
+function FRPServerRemote:getPlayer(clientId: any): any
+	return self._players[clientId]
+end
+
+function FRPServerRemote:getPeerStatus(clientId: any): any
+	local generation = self._generations[clientId] or 0
+	local inbound = self._state.clients[sessionStateKey(clientId, generation)]
+	local outbound = self._endpoint:getOutboundStatus(clientId)
+	return {
+		clientId = clientId,
+		connected = self._players[clientId] ~= nil,
+		generation = generation,
+		lastIntentSequence = if inbound ~= nil then inbound.lastIntentSequence else 0,
+		lastClientTick = if inbound ~= nil then inbound.lastClientTick else 0,
+		epoch = outbound.epoch,
+		serverSequence = outbound.sequence,
+		replayCount = outbound.replayCount,
+	}
+end
+
+function FRPServerRemote:send(target: any, messageType: string, payload: any, serverTick: number, kind: string?): any
+	if self._disposed then
+		return { ok = false, code = "disposed", message = "server RemoteEvent channel is disposed" }
+	end
+	if type(serverTick) ~= "number" or not isFinite(serverTick) or serverTick < 0 or serverTick % 1 ~= 0 then
+		return { ok = false, code = "invalid_tick", message = "serverTick must be a non-negative finite integer" }
+	end
+	local clientId, playerOrFailure = self:_clientId(target)
+	if clientId == nil then
+		return playerOrFailure
+	end
+	local lastTick = self._lastServerTick[clientId] or 0
+	if serverTick < lastTick then
+		return { ok = false, code = "stale_server_tick", message = "serverTick moved backwards for this client" }
+	end
+	local peerStatus = self:getPeerStatus(clientId)
+	local encoded = self._endpoint:encodeEvent(
+		clientId,
+		messageType,
+		payload,
+		serverTick,
+		peerStatus.lastIntentSequence,
+		kind
+	)
+	if not encoded.ok then
+		return encoded
+	end
+	self._lastServerTick[clientId] = serverTick
+	return self:_sendPacket(clientId, encoded.packet)
+end
+
+function FRPServerRemote:sendSnapshot(target: any, messageType: string, payload: any, serverTick: number): any
+	return self:send(target, messageType, payload, serverTick, "snapshot")
+end
+
+function FRPServerRemote:sendHeartbeat(target: any, serverTick: number?): any
+	if self._disposed then
+		return { ok = false, code = "disposed", message = "server RemoteEvent channel is disposed" }
+	end
+	if serverTick ~= nil
+		and (type(serverTick) ~= "number" or not isFinite(serverTick) or serverTick < 0 or serverTick % 1 ~= 0)
+	then
+		return { ok = false, code = "invalid_tick", message = "heartbeat serverTick must be a non-negative finite integer" }
+	end
+	local clientId, playerOrFailure = self:_clientId(target)
+	if clientId == nil then
+		return playerOrFailure
+	end
+	local lastTick = self._lastServerTick[clientId] or 0
+	serverTick = serverTick or lastTick
+	if type(serverTick) ~= "number" or not isFinite(serverTick) or serverTick < 0 or serverTick % 1 ~= 0 then
+		return { ok = false, code = "invalid_tick", message = "heartbeat serverTick must be a non-negative finite integer" }
+	end
+	if serverTick < lastTick then
+		return { ok = false, code = "stale_server_tick", message = "heartbeat serverTick moved backwards" }
+	end
+	local peerStatus = self:getPeerStatus(clientId)
+	local encoded = self._endpoint:encodeHeartbeat(clientId, serverTick, peerStatus.lastIntentSequence)
+	if not encoded.ok then
+		return encoded
+	end
+	self._lastServerTick[clientId] = serverTick
+	return self:_sendPacket(clientId, encoded.packet)
+end
+
+function FRPServerRemote:broadcast(players: any, messageType: string, payload: any, serverTick: number): any
+	if self._disposed then
+		return { ok = false, code = "disposed", message = "server RemoteEvent channel is disposed" }
+	end
+	if players == nil then
+		if type(self._options.getPlayers) == "function" then
+			local ok, resolved = runSynchronous(self._options.getPlayers)
+			if not ok then
+				return { ok = false, code = "players_error", message = tostring(resolved) }
+			end
+			players = resolved
+		elseif self._playersService ~= nil and type(readMember(self._playersService, "GetPlayers")) == "function" then
+			local ok, resolved = runSynchronous(readMember(self._playersService, "GetPlayers"), self._playersService)
+			if not ok then
+				return { ok = false, code = "players_error", message = tostring(resolved) }
+			end
+			players = resolved
+		else
+			players = {}
+			for _, player in pairs(self._players) do
+				players[#players + 1] = player
+			end
+		end
+	end
+	if type(players) ~= "table" then
+		return { ok = false, code = "invalid_players", message = "broadcast players must be an array" }
+	end
+	local results = {}
+	local allOk = true
+	for _, player in ipairs(players) do
+		local result = self:send(player, messageType, payload, serverTick)
+		results[#results + 1] = result
+		if not result.ok then
+			allOk = false
+		end
+	end
+	return { ok = allOk, code = if allOk then "broadcast_sent" else "broadcast_partial", results = results }
+end
+
+function FRPServerRemote:bindOutbound(event: any): any
+	assert(not self._disposed, "server RemoteEvent channel is disposed")
+	assert(type(event) == "table" and type(event.subscribe) == "function", "bindOutbound requires an FRP Event")
+	local stop = event:subscribe(function(request: any)
+		if type(request) ~= "table" then
+			self:_recordStatus({ ok = false, code = "invalid_outbound", message = "server outbound Event must emit a table" })
+			return
+		end
+		local target = request.player or request.peer or request.clientId
+		local result = self:send(target, request.messageType or request.channel, request.payload, request.serverTick or 0, request.kind)
+		self:_recordStatus(result)
+	end)
+	local binding = newDisposer()
+	binding:add(stop)
+	self._scope:add(binding)
+	return binding
+end
+
+function FRPServerRemote:removePeer(target: any): any
+	if self._disposed then
+		return { ok = false, code = "disposed", message = "server RemoteEvent channel is disposed" }
+	end
+	local clientId = target
+	if self._players[clientId] == nil and not isStableRemoteClientId(clientId) then
+		local ok, resolved = runSynchronous(self._getClientId, target)
+		if not ok or not isStableRemoteClientId(resolved) then
+			return { ok = false, code = "invalid_client", message = tostring(resolved) }
+		end
+		clientId = resolved
+	end
+	local generation = self._generations[clientId] or 0
+	self._players[clientId] = nil
+	self._endpoint:forgetClient(clientId)
+	self._lastServerTick[clientId] = nil
+	self._generations[clientId] = generation + 1
+	self._disconnectSignal:Fire({
+		transportKind = "disconnect",
+		clientId = clientId,
+		stateKey = sessionStateKey(clientId, generation),
+	})
+	return { ok = true, code = "peer_removal_queued", clientId = clientId, generation = generation + 1 }
+end
+
+function FRPServerRemote:isConnected(): boolean
+	return not self._disposed
+end
+
+function FRPServerRemote:dispose()
+	if self._disposed then
+		return
+	end
+	self._disposed = true
+	self._scope:dispose()
+	self._endpoint:dispose()
+	self._players = {}
+	self._playersService = nil
+	self._generations = {}
+	self._lastServerTick = {}
+	self._state = { clients = {}, decision = nil }
+	self._disconnectSignal = nil
+end
+
+FRPServerRemote.Disconnect = FRPServerRemote.dispose
+FRPServerRemote.disconnect = FRPServerRemote.dispose
+FRPServerRemote.Destroy = FRPServerRemote.dispose
+
+local FRPClientRemote = {}
+FRPClientRemote.__index = FRPClientRemote
+
+function FRPClientRemote:_recordStatus(status: any)
+	self._lastStatus = status
+	callOptionalHook(self, self._options.onStatus, status, "onStatus")
+	if status.ok == false then
+		callOptionalHook(self, self._options.onViolation, status, "onViolation")
+	end
+end
+
+function FRPClientRemote:_sendRaw(packet: any): any
+	if self._disposed then
+		return { ok = false, code = "disposed", message = "client RemoteEvent channel is disposed" }
+	end
+	local ok, message = invokeTransport(self._fireServer, "FireServer", packet)
+	if not ok then
+		local status = { ok = false, code = "transport_error", message = message }
+		self:_recordStatus(status)
+		return status
+	end
+	return { ok = true, code = "sent", packet = packet }
+end
+
+function FRPClientRemote:arrivals(): any
+	return self._arrivals
+end
+
+function FRPClientRemote:authority(): any
+	return self._authority
+end
+
+function FRPClientRemote:snapshots(): any
+	return self._snapshots
+end
+
+function FRPClientRemote:violations(): any
+	return self._violations
+end
+
+function FRPClientRemote:status(): any
+	local status = self._endpoint:getStatus(self._state)
+	status.connected = not self._disposed
+	status.serverTick = self._state.serverTick or 0
+	status.resyncPending = self._resyncPending
+	return status
+end
+
+function FRPClientRemote:pending(): any
+	return self._endpoint:getPendingIntents()
+end
+
+function FRPClientRemote:getLastIntentPacket(): any
+	return self._lastIntentPacket
+end
+
+function FRPClientRemote:send(messageType: string, payload: any, clientTick: number?): any
+	if self._disposed then
+		return { ok = false, code = "disposed", message = "client RemoteEvent channel is disposed" }
+	end
+	if clientTick == nil then
+		if type(self._options.getClientTick) == "function" then
+			local ok, resolved = runSynchronous(self._options.getClientTick)
+			if not ok then
+				return { ok = false, code = "tick_error", message = tostring(resolved) }
+			end
+			clientTick = resolved
+		else
+			self._localTick += 1
+			clientTick = self._localTick
+		end
+	end
+	local prepared = self._endpoint:prepareIntent(messageType, payload, clientTick)
+	if not prepared.ok then
+		return prepared
+	end
+	local sent = self:_sendRaw(prepared.packet)
+	if not sent.ok then
+		return sent
+	end
+	local committed = self._endpoint:commitIntent(prepared.packet)
+	if not committed.ok then
+		self:_recordStatus(committed)
+		return committed
+	end
+	self._lastIntentPacket = prepared.packet
+	self._retry[prepared.sequence] = { sentAt = self._time, attempts = 0, exhaustedNotified = false }
+	return {
+		ok = true,
+		code = "intent_sent",
+		sequence = prepared.sequence,
+		clientTick = clientTick,
+		packet = prepared.packet,
+	}
+end
+
+function FRPClientRemote:requestResync(): any
+	if self._disposed then
+		return { ok = false, code = "disposed", message = "client RemoteEvent channel is disposed" }
+	end
+	local encoded = self._endpoint:encodeResync(self._state.epoch, self._state.sequence + 1)
+	if not encoded.ok then
+		return encoded
+	end
+	self._resyncPacket = encoded.packet
+	self._resyncPending = true
+	self._resyncSentAt = self._time
+	local sent = self:_sendRaw(encoded.packet)
+	return sent
+end
+
+function FRPClientRemote:bindOutbound(event: any): any
+	assert(not self._disposed, "client RemoteEvent channel is disposed")
+	assert(type(event) == "table" and type(event.subscribe) == "function", "bindOutbound requires an FRP Event")
+	local stop = event:subscribe(function(request: any)
+		if type(request) ~= "table" then
+			self:_recordStatus({ ok = false, code = "invalid_outbound", message = "client outbound Event must emit a table" })
+			return
+		end
+		local result = self:send(request.messageType or request.channel, request.payload, request.clientTick)
+		self:_recordStatus(result)
+	end)
+	local binding = newDisposer()
+	binding:add(stop)
+	self._scope:add(binding)
+	return binding
+end
+
+function FRPClientRemote:_applyAck(sequence: any)
+	if type(sequence) ~= "number" then
+		return
+	end
+	local result = self._endpoint:acknowledge(sequence)
+	if result.ok then
+		for pendingSequence in pairs(self._retry) do
+			if pendingSequence <= sequence then
+				self._retry[pendingSequence] = nil
+			end
+		end
+	else
+		self:_recordStatus(result)
+	end
+end
+
+function FRPClientRemote:_retryOldest(frame: any)
+	if self._disposed then
+		return
+	end
+	self._time = frame.time
+	local pending = self._endpoint:getPendingIntents()
+	if #pending == 0 then
+		return
+	end
+	local packet = pending[1]
+	local retry = self._retry[packet.sequence]
+	if retry == nil then
+		retry = { sentAt = frame.time, attempts = 0, exhaustedNotified = false }
+		self._retry[packet.sequence] = retry
+	end
+	local delay = math.min(self._maxRetryDelay, self._ackTimeout * (self._retryBackoff ^ retry.attempts))
+	if frame.time - retry.sentAt < delay then
+		return
+	end
+	local sent = self:_sendRaw(packet)
+	retry.sentAt = frame.time
+	retry.attempts = math.min(self._maxRetries, retry.attempts + 1)
+	if retry.attempts >= self._maxRetries and not retry.exhaustedNotified then
+		retry.exhaustedNotified = true
+		local status = {
+			ok = false,
+			code = "intent_retry_exhausted",
+			message = "intent remains unacknowledged after the configured retries; capped retries continue",
+			sequence = packet.sequence,
+		}
+		self:_recordStatus(status)
+		callOptionalHook(self, self._options.onRetryExhausted, status, "onRetryExhausted")
+		if not self._resyncPending then
+			self:requestResync()
+		end
+	end
+	return sent
+end
+
+function FRPClientRemote:_retryResync(frame: any)
+	if self._disposed or not self._resyncPending or self._resyncPacket == nil then
+		return
+	end
+	if frame.time - self._resyncSentAt < self._resyncRetryInterval then
+		return
+	end
+	self:_sendRaw(self._resyncPacket)
+	self._resyncSentAt = frame.time
+end
+
+function FRPClientRemote:isConnected(): boolean
+	return not self._disposed
+end
+
+function FRPClientRemote:dispose()
+	if self._disposed then
+		return
+	end
+	self._disposed = true
+	self._scope:dispose()
+	self._endpoint:dispose()
+	self._retry = {}
+	self._resyncPending = false
+	self._resyncPacket = nil
+	self._lastIntentPacket = nil
+	self._state = { epoch = 0, sequence = 0, ackSequence = 0, serverTick = 0, decision = nil }
+end
+
+FRPClientRemote.Disconnect = FRPClientRemote.dispose
+FRPClientRemote.disconnect = FRPClientRemote.dispose
+FRPClientRemote.Destroy = FRPClientRemote.dispose
+
+function Overdare.attachFRPServerRemote(driver: any, remoteEvent: any, options: any?): any
+	assertFRPDriver(driver, "Overdare.attachFRPServerRemote")
+	remoteEvent, options = normalizeFRPRemoteArguments(remoteEvent, options)
+	local Network = loadNetworkModule()
+	local protocol = options.protocol
+	assert(protocol ~= nil, "attachFRPServerRemote requires options.protocol")
+	local getClientId = options.getClientId or defaultClientId
+	assert(type(getClientId) == "function", "getClientId must be a function")
+	local playersService = resolvePlayersService(options)
+	local disconnectSignal = newAdapterSignal()
+
+	local channel
+	local endpoint = Network.createFRPServer({
+		protocol = protocol,
+		authorize = options.authorize,
+		rateLimit = options.rateLimit,
+		replayCapacity = options.replayCapacity,
+		buildSnapshot = if options.buildSnapshot == nil then nil else function(clientId: any, request: any, context: any)
+			local provided = options.buildSnapshot(clientId, request, context)
+			if type(provided) == "table" then
+				local snapshot = copyRemoteTable(provided)
+				if snapshot.ackSequence == nil and channel ~= nil then
+					snapshot.ackSequence = channel:getPeerStatus(clientId).lastIntentSequence
+				end
+				return snapshot
+			end
+			return provided
+		end,
+	})
+	channel = setmetatable({
+		_options = options,
+		_endpoint = endpoint,
+		_scope = newDisposer(options.scope),
+		_getClientId = getClientId,
+		_fireClient = options.fireClient or options.sendClient or remoteMethod(remoteEvent, { "FireClient", "fireClient" }),
+		_players = {},
+		_playersService = playersService,
+		_generations = {},
+		_lastServerTick = {},
+		_state = endpoint:initialInboundState(),
+		_lastStatus = nil,
+		_lastHookError = nil,
+		_lastIntentPacket = nil,
+		_disconnectSignal = disconnectSignal,
+		_disposed = false,
+	}, FRPServerRemote)
+
+	local signal = resolveRemoteSignal(remoteEvent, "OnServerEvent", options.signal)
+	local raw, rawBinding = driver:eventFromSignal(signal, {
+		label = options.label or "network.server.arrivals",
+		maxPending = options.maxPendingPerFrame or 128,
+		onOverflow = function(detail: any)
+			channel:_recordStatus({
+				ok = false,
+				code = "frame_queue_overflow",
+				message = "server RemoteEvent frame queue is full",
+				detail = detail,
+			})
+		end,
+		map = function(...: any)
+			local arguments = packArguments(...)
+			local player = arguments[1]
+			local clientId = getClientId(player)
+			assert(isStableRemoteClientId(clientId), "getClientId must return a stable string or non-negative integer")
+			channel._players[clientId] = player
+			local generation = channel._generations[clientId] or 0
+			return {
+				transportKind = "packet",
+				clientId = clientId,
+				stateKey = sessionStateKey(clientId, generation),
+				packet = if arguments.n == 2 then arguments[2] else { adapterMalformedArgumentCount = arguments.n },
+			}
+		end,
+	})
+	channel._scope:add(rawBinding)
+	local arrivals = raw:mapWithTime(function(input: any, time: number)
+		local value = copyRemoteTable(input)
+		value.receivedAt = time
+		value.context = { clientId = input.clientId, receivedAt = time }
+		return value
+	end, { label = "network.server.timed-arrivals" })
+	local manualRemoved, manualRemovalBinding = driver:eventFromSignal(disconnectSignal, {
+		label = "network.server.manual-peer-removing",
+		maxPending = options.maxPendingPerFrame or 128,
+		onOverflow = function(detail: any)
+			channel:_recordStatus({
+				ok = false,
+				code = "frame_queue_overflow",
+				message = "manual peer-removal queue is full",
+				detail = detail,
+			})
+		end,
+	})
+	channel._scope:add(manualRemovalBinding)
+	arrivals = arrivals:merge(manualRemoved:mapWithTime(function(input: any, time: number)
+		local value = copyRemoteTable(input)
+		value.receivedAt = time
+		return value
+	end))
+
+	local playerRemoving = options.playerRemovingSignal
+	if playerRemoving == nil and playersService ~= nil then
+		playerRemoving = readMember(playersService, "PlayerRemoving")
+	end
+	if playerRemoving ~= nil then
+		local removed, removalBinding = driver:eventFromSignal(playerRemoving, {
+			label = "network.server.player-removing",
+			maxPending = options.maxPendingPerFrame or 128,
+			map = function(player: any)
+				local clientId = getClientId(player)
+				assert(isStableRemoteClientId(clientId), "getClientId must return a stable string or non-negative integer")
+				local generation = channel._generations[clientId] or 0
+				channel._generations[clientId] = generation + 1
+				channel._players[clientId] = nil
+				return {
+					transportKind = "disconnect",
+					clientId = clientId,
+					stateKey = sessionStateKey(clientId, generation),
+				}
+			end,
+		})
+		channel._scope:add(removalBinding)
+		arrivals = arrivals:merge(removed:mapWithTime(function(input: any, time: number)
+			local value = copyRemoteTable(input)
+			value.receivedAt = time
+			return value
+		end))
+	end
+
+	local scanned = arrivals:scan(endpoint:initialInboundState(), function(state: any, input: any)
+		return endpoint:reduceInbound(state, input)
+	end, { label = "network.server.protocol-state" })
+	local decisions = scanned:map(function(state: any)
+		return state.decision
+	end, { label = "network.server.decisions" })
+	channel._arrivals = arrivals
+	channel._intents = decisions:filter(function(decision: any)
+		return decision ~= nil and decision.ok and decision.kind == "intent"
+	end):map(function(decision: any)
+		return decision
+	end, { label = "network.server.intents" })
+	channel._violations = decisions:filter(function(decision: any)
+		return decision ~= nil and not decision.ok
+	end)
+	channel._disconnects = decisions:filter(function(decision: any)
+		return decision ~= nil and decision.kind == "disconnect"
+	end)
+
+	channel._scope:add(scanned:subscribe(function(state: any)
+		channel._state = state
+		local decision = state.decision
+		if decision == nil then
+			return
+		end
+		channel:_recordStatus(decision)
+		local clientId = decision.clientId
+		if decision.kind == "intent" or decision.consumed
+			or decision.code == "duplicate_intent" or decision.code == "stale_intent"
+		then
+			local encoded = endpoint:encodeAck(clientId, decision.lastIntentSequence or 0)
+			if encoded.ok then
+				channel:_sendPacket(clientId, encoded.packet)
+			end
+		elseif decision.kind == "intent_gap" then
+			local encoded = endpoint:encodeIntentGap(clientId, decision.expectedSequence, decision.lastIntentSequence or 0)
+			if encoded.ok then
+				channel:_sendPacket(clientId, encoded.packet)
+			end
+		elseif decision.kind == "resync" and decision.ok then
+			local recovered = endpoint:recover(clientId, decision, { receivedAt = decision.receivedAt })
+			if recovered.ok then
+				if #recovered.packets == 0 then
+					channel:sendHeartbeat(clientId)
+				else
+					for _, packet in ipairs(recovered.packets) do
+						channel:_sendPacket(clientId, packet)
+					end
+				end
+			else
+				channel:_recordStatus(recovered)
+				local unavailable = endpoint:encodeResyncUnavailable(clientId, decision.epoch, decision.expectedSequence)
+				if unavailable.ok then
+					channel:_sendPacket(clientId, unavailable.packet)
+				end
+			end
+		elseif decision.kind == "disconnect" then
+			endpoint:forgetClient(clientId)
+			channel._lastServerTick[clientId] = nil
+		end
+	end, { priority = -10000 }))
+
+	local heartbeatInterval = options.heartbeatInterval
+	if heartbeatInterval == nil then
+		heartbeatInterval = 1
+	end
+	if heartbeatInterval ~= false then
+		assert(type(heartbeatInterval) == "number" and heartbeatInterval > 0,
+			"heartbeatInterval must be false or a positive number")
+		local lastHeartbeat = 0
+		channel._scope:add(driver:frames():subscribe(function(frame: any)
+			if frame.time - lastHeartbeat < heartbeatInterval then
+				return
+			end
+			lastHeartbeat = frame.time
+			for clientId, player in pairs(channel._players) do
+				channel:sendHeartbeat(player)
+			end
+		end, { priority = 10000 }))
+	end
+	return channel
+end
+
+function Overdare.attachFRPClientRemote(driver: any, remoteEvent: any, options: any?): any
+	assertFRPDriver(driver, "Overdare.attachFRPClientRemote")
+	remoteEvent, options = normalizeFRPRemoteArguments(remoteEvent, options)
+	local Network = loadNetworkModule()
+	local protocol = options.protocol
+	assert(protocol ~= nil, "attachFRPClientRemote requires options.protocol")
+	local endpoint = Network.createFRPClient({
+		protocol = protocol,
+		pendingCapacity = options.pendingCapacity,
+	})
+	local channel = setmetatable({
+		_options = options,
+		_endpoint = endpoint,
+		_scope = newDisposer(options.scope),
+		_fireServer = options.fireServer or options.sendServer or remoteMethod(remoteEvent, { "FireServer", "fireServer" }),
+		_state = endpoint:initialInboundState(),
+		_retry = {},
+		_time = 0,
+		_localTick = 0,
+		_ackTimeout = options.ackTimeout or 1,
+		_retryBackoff = options.retryBackoff or 2,
+		_maxRetryDelay = options.maxRetryDelay or 8,
+		_maxRetries = options.maxRetries or 8,
+		_resyncPending = false,
+		_resyncPacket = nil,
+		_resyncSentAt = 0,
+		_resyncRetryInterval = options.resyncRetryInterval or 1,
+		_lastStatus = nil,
+		_lastHookError = nil,
+		_disposed = false,
+	}, FRPClientRemote)
+	assert(type(channel._ackTimeout) == "number" and channel._ackTimeout > 0, "ackTimeout must be positive")
+	assert(type(channel._retryBackoff) == "number" and channel._retryBackoff >= 1, "retryBackoff must be >= 1")
+	assert(type(channel._maxRetryDelay) == "number" and channel._maxRetryDelay > 0, "maxRetryDelay must be positive")
+	assert(type(channel._maxRetries) == "number" and channel._maxRetries >= 1 and channel._maxRetries % 1 == 0,
+		"maxRetries must be a positive integer")
+	assert(type(channel._resyncRetryInterval) == "number" and channel._resyncRetryInterval > 0,
+		"resyncRetryInterval must be positive")
+
+	local signal = resolveRemoteSignal(remoteEvent, "OnClientEvent", options.signal)
+	local raw, rawBinding = driver:eventFromSignal(signal, {
+		label = options.label or "network.client.arrivals",
+		maxPending = options.maxPendingPerFrame or 128,
+		onOverflow = function(detail: any)
+			channel:_recordStatus({
+				ok = false,
+				code = "frame_queue_overflow",
+				message = "client RemoteEvent frame queue is full",
+				detail = detail,
+			})
+		end,
+		map = function(...: any)
+			local arguments = packArguments(...)
+			return { packet = if arguments.n == 1 then arguments[1] else { adapterMalformedArgumentCount = arguments.n } }
+		end,
+	})
+	channel._scope:add(rawBinding)
+	local arrivals = raw:mapWithTime(function(input: any, time: number)
+		return {
+			packet = input.packet,
+			receivedAt = time,
+			intentSequence = endpoint:getStatus(channel._state).intentSequence,
+		}
+	end, { label = "network.client.timed-arrivals" })
+	local scanned = arrivals:scan(endpoint:initialInboundState(), function(state: any, input: any)
+		return endpoint:reduceInbound(state, input)
+	end, { label = "network.client.protocol-state" })
+	local decisions = scanned:map(function(state: any)
+		return state.decision
+	end, { label = "network.client.decisions" })
+	channel._arrivals = arrivals:map(function(input: any)
+		return input.packet
+	end, { label = "network.client.raw-packets" })
+	channel._authority = decisions:filter(function(decision: any)
+		return decision ~= nil and decision.ok and (decision.kind == "event" or decision.kind == "snapshot")
+	end)
+	channel._snapshots = decisions:filter(function(decision: any)
+		return decision ~= nil and decision.ok and decision.kind == "snapshot"
+	end)
+	channel._violations = decisions:filter(function(decision: any)
+		return decision ~= nil and not decision.ok
+	end)
+
+	channel._scope:add(scanned:subscribe(function(state: any)
+		channel._state = state
+		local decision = state.decision
+		if decision == nil then
+			return
+		end
+		channel:_recordStatus(decision)
+		if decision.ackSequence ~= nil then
+			channel:_applyAck(decision.ackSequence)
+		end
+		if decision.kind == "intent_gap" and decision.ok then
+			local pending = endpoint:pendingFrom(decision.expectedSequence)
+			if pending.ok then
+				for _, packet in ipairs(pending.packets) do
+					channel:_sendRaw(packet)
+					local retry = channel._retry[packet.sequence]
+					if retry ~= nil then
+						retry.sentAt = channel._time
+					end
+				end
+			else
+				channel:_recordStatus(pending)
+			end
+		elseif decision.kind == "resync" and decision.requestResync then
+			if not channel._resyncPending then
+				channel:requestResync()
+			end
+		elseif decision.kind == "resync_unavailable" then
+			channel._resyncPending = false
+			channel._resyncPacket = nil
+		elseif decision.ok and (decision.kind == "event" or decision.kind == "snapshot" or decision.kind == "heartbeat") then
+			channel._resyncPending = false
+			channel._resyncPacket = nil
+		end
+	end, { priority = -10000 }))
+	channel._scope:add(driver:frames():subscribe(function(frame: any)
+		channel:_retryOldest(frame)
+		channel:_retryResync(frame)
+	end, { priority = 10000 }))
+
+	if options.initialResync ~= false then
+		channel:requestResync()
+	end
+	return channel
+end
+
+Overdare.attachRemoteEventServer = Overdare.attachFRPServerRemote
+Overdare.attachRemoteEventClient = Overdare.attachFRPClientRemote
 
 -- Descriptive aliases for users who do not enable prediction.
 Overdare.createServerAdapter = Overdare.createServerReplication

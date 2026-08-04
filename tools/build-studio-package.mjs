@@ -36,6 +36,7 @@ const expectedSourceFiles = [
 	"Core/Runtime.luau",
 	"Debug/init.luau",
 	"Network/init.luau",
+	"Network/EventProtocol.luau",
 	"Overdare/init.luau",
 	"Types.luau",
 	"init.luau",
@@ -73,10 +74,11 @@ function parseString(source, pattern, label) {
 }
 
 async function readMetadata() {
-	const [rootSource, hashSource, networkSource] = await Promise.all([
+	const [rootSource, hashSource, networkSource, eventProtocolSource] = await Promise.all([
 		readFile(join(sourceRoot, "init.luau"), "utf8"),
 		readFile(join(sourceRoot, "Core", "Hash.luau"), "utf8"),
 		readFile(join(sourceRoot, "Network", "init.luau"), "utf8"),
+		readFile(join(sourceRoot, "Network", "EventProtocol.luau"), "utf8"),
 	]);
 
 	const studioRequireContracts = [
@@ -87,6 +89,8 @@ async function readMetadata() {
 		[rootSource, "require(script.Core.Hash)", "root -> Core.Hash"],
 		[networkSource, "require(script.Parent.Core.Codec)", "Network -> Core.Codec"],
 		[networkSource, "require(script.Parent.Core.Hash)", "Network -> Core.Hash"],
+		[networkSource, "require(script.EventProtocol)", "Network -> Network.EventProtocol"],
+		[eventProtocolSource, "require(script.Parent.Parent.Core.Codec)", "Network.EventProtocol -> Core.Codec"],
 	];
 	for (const [source, reference, label] of studioRequireContracts) {
 		invariant(source.includes(reference), `Studio require contract is missing or stale: ${label}`);
@@ -104,6 +108,11 @@ async function readMetadata() {
 			networkSource,
 			/\bPROTOCOL_VERSION\s*=\s*(\d+)/,
 			"Network.PROTOCOL_VERSION"
+		),
+		eventProtocolVersion: parseInteger(
+			eventProtocolSource,
+			/\bEVENT_PROTOCOL_VERSION\s*=\s*(\d+)/,
+			"Network.EVENT_PROTOCOL_VERSION"
 		),
 	};
 }
@@ -310,6 +319,7 @@ async function buildInstaller(objects, metadata, digest) {
 		`\tcreatedRoot:SetAttribute("ReactiveStateApiVersion", ${metadata.apiVersion})`,
 		`\tcreatedRoot:SetAttribute("ReactiveStateCanonicalVersion", ${metadata.canonicalVersion})`,
 		`\tcreatedRoot:SetAttribute("ReactiveStateNetworkProtocolVersion", ${metadata.networkProtocolVersion})`,
+		`\tcreatedRoot:SetAttribute("ReactiveStateEventProtocolVersion", ${metadata.eventProtocolVersion})`,
 		`\tcreatedRoot:SetAttribute("ReactiveStatePackageSha256", ${JSON.stringify(digest)})`,
 		"\tcreatedRoot.Parent = ReplicatedStorage",
 		"end)",
@@ -406,6 +416,7 @@ async function build() {
 			apiVersion: metadata.apiVersion,
 			canonicalVersion: metadata.canonicalVersion,
 			networkProtocolVersion: metadata.networkProtocolVersion,
+			eventProtocolVersion: metadata.eventProtocolVersion,
 			artifactType: "multi-module-source-tree",
 			installRoot: `ReplicatedStorage/${PACKAGE_NAME}`,
 		},
@@ -444,6 +455,10 @@ async function verify() {
 	invariant(
 		manifest.package.networkProtocolVersion === metadata.networkProtocolVersion,
 		"Network protocol version is stale"
+	);
+	invariant(
+		manifest.package.eventProtocolVersion === metadata.eventProtocolVersion,
+		"Event protocol version is stale"
 	);
 
 	const actualPackageFiles = await walkFiles(packageRoot);

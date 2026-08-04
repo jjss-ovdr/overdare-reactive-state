@@ -11,6 +11,7 @@ require("./utility.spec")(harness)
 require("./facade.spec")(harness)
 require("./overdare.spec")(harness)
 require("./network.spec")(harness)
+require("./multiplayer.spec")(harness)
 require("./integration.spec")(harness)
 
 harness:run()

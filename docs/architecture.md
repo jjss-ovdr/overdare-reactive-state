@@ -94,8 +94,9 @@ src/Core/Clock.luau          기존 fixed/manual state clock
 src/Core/Codec.luau          serializable data codec
 src/Core/Hash.luau           canonical state hash
 
-src/Overdare/init.luau       batched FRP driver + 기존 State adapters
-src/Network/init.luau        기존 StateRuntime protocol extension
+src/Overdare/init.luau       batched FRP driver + FRP RemoteEvent/State adapters
+src/Network/init.luau        StateRuntime snapshot/patch + FRP protocol facade
+src/Network/EventProtocol.luau  intent/authority/ack/replay/snapshot epoch
 src/Bridge/init.luau         기존 StateRuntime bridge extension
 src/BehaviorTree/init.luau   AI behavior tree; FRP Behavior와 별도
 src/AttributePreset/init.luau
@@ -118,4 +119,6 @@ network packet arrival @ localTime
 
 늦게 도착한 packet의 server tick을 과거 Event time으로 주입하지 않는다. occurrence time은 로컬 도착 시각이고 server tick은 payload다. 같은 packet의 여러 field도 여러 setter가 아니라 packet occurrence 하나로 유지해야 atomicity가 보존된다.
 
-현재 `Network` 모듈은 0.1 StateRuntime extension과의 호환을 위해 남아 있다. FRP-native wire binding은 protocol 계층과 별도 adapter로 다루며 Core denotation에 포함하지 않는다.
+`Network.defineFRPProtocol`은 이 경계를 위한 engine-neutral schema/reducer를 제공하고, `Overdare.attachFRPServerRemote` / `attachFRPClientRemote`가 실제 signal을 같은 Host frame에 모은다. Server authority, 양방향 strict sequence, ack, rate/size limit, intent timeout retry, authoritative heartbeat/replay와 snapshot epoch를 이 계층이 소유한다. 이 기능은 별도 ModuleScript이므로 Core denotation이나 root require에 engine listener를 추가하지 않는다.
+
+Network Host도 정통 Event prefix를 보존하므로 match/session이 Host와 adapter 수명을 소유해야 한다. 긴 persistent world는 session epoch 종료 시 channel, driver, Host 순서로 dispose한다.

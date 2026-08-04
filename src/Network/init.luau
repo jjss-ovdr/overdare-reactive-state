@@ -943,6 +943,18 @@ function Server:acceptIntent(clientId, payload, context)
 			ackSequence = state.lastIntentSequence,
 		})
 	end
+	local expectedSequence = state.lastIntentSequence + 1
+	if payload.sequence > expectedSequence then
+		return failure("intent_sequence_gap", string.format(
+			"intent sequence %d skipped expected sequence %d",
+			payload.sequence,
+			expectedSequence
+		), {
+			ackSequence = state.lastIntentSequence,
+			expectedSequence = expectedSequence,
+			requestResync = true,
+		})
+	end
 	if clientTick < state.lastIntentTick then
 		return failure("stale_intent_tick", string.format("intent clientTick %d is older than last accepted tick %d", clientTick, state.lastIntentTick))
 	end
@@ -1531,5 +1543,42 @@ function Client:dispose()
 end
 
 Client.Destroy = Client.dispose
+
+-- The FRP event protocol is deliberately a separate implementation from the
+-- StateRuntime snapshot/patch protocol above. Sharing the public Network
+-- namespace keeps installation simple while preventing the legacy mutable
+-- replicator from becoming the denotation of Event traffic.
+local EventProtocol
+if script ~= nil then
+	EventProtocol = require(script.EventProtocol)
+else
+	local attempts = {
+		"./EventProtocol",
+		"./Network/EventProtocol",
+		"../Network/EventProtocol",
+		"../src/Network/EventProtocol",
+		"./src/Network/EventProtocol",
+	}
+	local messages = {}
+	for _, path in ipairs(attempts) do
+		local ok, module = pcall(require, path)
+		if ok then
+			EventProtocol = module
+			break
+		end
+		messages[#messages + 1] = tostring(module)
+	end
+	if EventProtocol == nil then
+		error("Network could not load EventProtocol: " .. table.concat(messages, " | "), 0)
+	end
+end
+
+Network.EVENT_PROTOCOL_VERSION = EventProtocol.EVENT_PROTOCOL_VERSION
+Network.defineEventProtocol = EventProtocol.defineEventProtocol
+Network.defineFRPProtocol = EventProtocol.defineEventProtocol
+Network.createEventServer = EventProtocol.createEventServer
+Network.createFRPServer = EventProtocol.createEventServer
+Network.createEventClient = EventProtocol.createEventClient
+Network.createFRPClient = EventProtocol.createEventClient
 
 return Network

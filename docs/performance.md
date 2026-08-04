@@ -24,6 +24,27 @@ luau -O2 --codegen benchmarks/frp-run.luau -a standard O2-codegen
 
 Event dependency는 weak-key라 버린 downstream graph는 source가 붙잡지 않는다. 반면 살아 있는 Host의 source prefix와 Reactive history는 Event Monad의 임의 과거 선택을 위해 의도적으로 보존한다. 장기 메모리 gate는 match/session epoch 종료 시 `Host:dispose()`까지 포함해 측정해야 한다.
 
+## Multiplayer-first protocol suite
+
+RemoteEvent 위에 올라가는 엔진 독립 프로토콜은 FRP Core와 별도로 다음 8개 workload를 측정한다.
+
+| Workload | 검증하는 경로 |
+|---|---|
+| `intent/validated_ingress_02p/08p/32p` | codec/wire 검증, strict client sequence, server reducer, ack 후 pending 해제 |
+| `authority/per_peer_stream_02p/08p/32p` | peer별 epoch/sequence, encode/decode, bounded replay outbox |
+| `recovery/replay_064` | 보존된 64-packet 연속 구간 복제와 client 재적용 |
+| `security/reject_untrusted` | 실행 가능한 값을 포함한 비신뢰 packet의 wire-boundary 거부와 sequence 불변성 |
+
+```sh
+luau -O1 benchmarks/multiplayer-run.luau -a standard O1
+luau -O2 benchmarks/multiplayer-run.luau -a standard O2
+luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
+```
+
+각 모드는 correctness assertion과 p50/p95/ops-per-second를 함께 출력한다. CLI suite는 RemoteEvent 네트워크 왕복 시간을 포함하지 않으므로 Studio의 2-client 및 network emulation 결과와 혼합해서 해석하지 않는다.
+
+2026-08-04 실행에서 세 모드 모두 8개 gate를 통과했다. O2 codegen p50은 validated intent 2/8/32 peer에서 약 87.2k/88.2k/86.0k packets/s, authority encode+client reduce에서 약 66.2k/66.0k/64.3k packets/s였다. 전체 p50/p95는 [multiplayer-first protocol baseline](../benchmarks/results/2026-08-04-multiplayer-frp.md)에 보존했다.
+
 ## 기존 StateRuntime suite
 
 0.1 Atom/Computed 호환 계층은 기존 전략 문서 13.3의 10개 workload를 계속 실행한다. 이 결과는 StateRuntime 확장 baseline이며 정통 FRP Core 성능과 합쳐서 보고하지 않는다.
@@ -78,6 +99,6 @@ Studio에서는 [`benchmarks/StudioRunner.server.luau`](../benchmarks/StudioRunn
 
 - `history.strategy="journal"`과 built-in snapshot interval은 아직 구현되지 않았다.
 - 실제 OVERDARE Studio server/client VM 수치는 아직 없다.
-- RemoteEvent transport를 거치는 실제 multi-client, native physics sampling, target-device, Asset Drawer 설치 검증은 별도다.
+- RemoteEvent transport를 거치는 실제 Studio multi-client harness, native physics sampling, target-device, Asset Drawer 설치 검증은 별도다.
 
 따라서 독립 Luau 결과는 구현 baseline이지 1.0 release 승인이 아니다.

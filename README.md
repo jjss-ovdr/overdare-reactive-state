@@ -76,7 +76,9 @@ binding:dispose()
 driver:dispose() -- Host는 소유하지 않으므로 살아 있다.
 ```
 
-한 Host에는 활성 OVERDARE clock driver를 하나만 둘 수 있다. 멀티플레이에서는 패킷 도착 시각을 Event time으로 쓰고 server tick은 payload 데이터로 보존한다. FRP graph 자체가 복제나 권한 검증을 대신하지 않는다.
+한 Host에는 활성 OVERDARE clock driver를 하나만 둘 수 있다. 멀티플레이에서는 패킷 도착 시각을 Event time으로 쓰고 server tick은 payload 데이터로 보존한다.
+
+멀티플레이용 `Network.defineFRPProtocol`과 `Overdare.attachFRPServerRemote` / `attachFRPClientRemote`는 intent-only client, server authority, client별 sequence/ack, rate·payload 제한, exact intent retry, replay buffer와 snapshot epoch를 제공한다. 자세한 전체 예제는 [멀티플레이 Network 경계](./docs/networking.md)에 있다.
 
 ## 공개 코어
 
@@ -113,7 +115,15 @@ luau -O2 benchmarks/frp-run.luau -a standard O2
 luau -O2 --codegen benchmarks/frp-run.luau -a standard O2-codegen
 ```
 
-현재 자동 검증은 110개 test와 7개 Push-Pull FRP workload를 포함한다. CLI 수치는 회귀 baseline이며 Studio/기기 성능을 대신하지 않는다.
+멀티플레이 protocol 벤치:
+
+```sh
+luau -O1 benchmarks/multiplayer-run.luau -a standard O1
+luau -O2 benchmarks/multiplayer-run.luau -a standard O2
+luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
+```
+
+현재 자동 검증은 124개 test, 7개 Push-Pull FRP workload, 8개 multiplayer protocol workload를 포함한다. 그중 fake RemoteEvent 기반 2-client test는 격리, 권한, duplicate/stale/gap, 양방향 유실·재전송, replay miss→snapshot, queue/packet limit과 disposal을 포함한다. CLI 수치는 회귀 baseline이며 실제 Studio/기기 성능을 대신하지 않는다.
 
 ## 문서
 

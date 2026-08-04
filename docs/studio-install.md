@@ -46,6 +46,7 @@ ReplicatedStorage
     │   └── Runtime (ModuleScript)
     ├── Debug (ModuleScript; Debug/init.luau)
     ├── Network (ModuleScript; Network/init.luau)
+    │   └── EventProtocol (ModuleScript)
     ├── Overdare (ModuleScript; Overdare/init.luau)
     └── Types (ModuleScript; Types.luau)
 ```
@@ -75,6 +76,8 @@ host:dispose()
 
 print("Push-Pull FRP Studio require PASS")
 ```
+
+설치기 root attribute에는 legacy `ReactiveStateNetworkProtocolVersion`과 FRP RemoteEvent용 `ReactiveStateEventProtocolVersion`이 각각 기록된다.
 
 Client에서도 root와 실제 사용할 optional module을 한 번씩 require한다. 그다음 `docs/overdare-checklist.md` 순서로 engine event, RemoteEvent, multi-client, cleanup, Studio benchmark gate를 검증한다.
 

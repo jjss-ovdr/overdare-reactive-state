@@ -198,7 +198,7 @@ RunService phase -> one Host:frame(time)
 - Behavior Monad
 - continuous numerical integration helper
 - Zeno stream 또는 한 finite time 이전의 무한 occurrence 지원
-- FRP-native replication protocol 및 권한 시스템
+- Event/Reactive graph 자체의 자동 복제와 built-in AOI projection (명시적 FRP protocol/authority adapter는 `docs/networking.md`에 제공)
 - Studio target-device 절대 성능 합격선
 
 ## 10. 수명과 무한 prefix

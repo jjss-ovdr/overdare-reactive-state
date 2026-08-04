@@ -179,4 +179,21 @@ return function(h)
 		h:equal(rejected.code, "intent_rejected")
 		h:equal(f.serverHealth:get(), 100)
 	end)
+
+	h:test("legacy state protocol rejects a forward client intent sequence gap", function()
+		local f = fixture()
+		local intent = f.client:createIntent({ move = 1 }, 1)
+		h:truthy(intent.ok)
+		local gap = {}
+		for key, value in pairs(intent.payload) do
+			gap[key] = value
+		end
+		gap.sequence = 2
+		local rejected = f.server:acceptIntent("a", gap)
+		h:falsy(rejected.ok)
+		h:equal(rejected.code, "intent_sequence_gap")
+		h:equal(rejected.expectedSequence, 1)
+		h:equal(f.server:getClientStatus("a").ackSequence, 0)
+		h:truthy(f.server:acceptIntent("a", intent.payload).ok)
+	end)
 end

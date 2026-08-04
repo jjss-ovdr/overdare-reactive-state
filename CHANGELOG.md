@@ -24,6 +24,17 @@
   observation is an explicit `mapWithTime`/`snapshot` extension.
 - Kept the 0.1 Atom/Computed engine as the explicit `createStateRuntime()`
   compatibility extension; it is no longer described as the FRP Core.
+- Added a multiplayer-first FRP protocol and OVERDARE RemoteEvent adapter with
+  server authority, per-client sequence/ack, rate and wire budgets, bounded
+  queues, exact intent retries, heartbeats, replay, snapshot epochs, and
+  PlayerRemoving cleanup.
+- Added lost-initial-resync retry, non-advancing heartbeat ticks, automatic
+  Players lifecycle hookup, session-generation cleanup, and atomic snapshot
+  failure handling.
+- Added fake two-client loss/reorder/replay/snapshot/lifecycle tests and an
+  actual OVERDARE Studio two-client release-gate harness.
+- Added 2/8/32-peer protocol benchmarks for validated intent ingress and
+  authoritative streams, plus replay recovery and untrusted-packet rejection.
 
 ## 0.1.0-dev.1 - Unreleased
 

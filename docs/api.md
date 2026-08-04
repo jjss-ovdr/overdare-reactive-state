@@ -162,3 +162,35 @@ local frames = driver:frames()
 ```
 
 Signal callback은 pending queue에만 넣고 phase callback이 한 번의 Host frame으로 flush한다. 그래서 Signal 도착 순서와 무관하게 Event merge의 구조적 tie 순서가 유지된다. binding/driver disposer는 idempotent하며 driver는 Host를 dispose하지 않는다.
+
+`eventFromSignal`에는 선택적으로 `maxPending`과 `onOverflow`를 줄 수 있다. Network adapter는 기본 128개로 제한해 한 engine frame의 RemoteEvent flood가 driver queue를 무한히 늘리지 못하게 한다.
+
+## FRP multiplayer protocol
+
+```lua
+local Network = require(ReplicatedStorage.ReactiveState.Network)
+
+local protocol = Network.defineFRPProtocol(messages, {
+    id = "gameplay-v1",
+    schemaVersion = 1,
+})
+
+local serverProtocol = Network.createFRPServer({
+    protocol = protocol,
+    authorize = authorize,
+    buildSnapshot = buildSnapshot,
+})
+
+local clientProtocol = Network.createFRPClient({ protocol = protocol })
+```
+
+이 세 API는 engine connection을 만들지 않는 reducer/encoder다. 일반 사용자는 직접 reducer를 구동하기보다 다음 OVERDARE binding을 사용한다.
+
+- `Overdare.attachFRPServerRemote(driver, remoteEvent, options)`
+- `Overdare.attachFRPClientRemote(driver, remoteEvent, options)`
+
+Server channel은 `arrivals`, `intents`, `violations`, `disconnects`, `send`, `sendSnapshot`, `sendHeartbeat`, `broadcast`, `bindOutbound`, `getPeerStatus`, `removePeer`, `dispose`를 제공한다.
+
+Client channel은 `arrivals`, `authority`, `snapshots`, `violations`, `send`, `requestResync`, `bindOutbound`, `status`, `pending`, `getLastIntentPacket`, `dispose`를 제공한다. `status()`에는 pending/ack/epoch/server sequence 외에 `serverTick`, `resyncPending`, `connected`가 포함된다.
+
+Wire/sequence/ack/replay/snapshot epoch 계약과 전체 예제는 [FRP 멀티플레이와 서버 권위](./networking.md)에 있다.

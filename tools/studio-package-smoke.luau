@@ -3,7 +3,7 @@
 -- This runs against the generated package, not src. Build it first with:
 -- node tools/build-studio-package.mjs
 
-local Network = require("../dist/ReactiveState/Network")
+local Network: any = require("../dist/ReactiveState/Network")
 local State = require("../dist/ReactiveState")
 local AttributePreset = require("../dist/ReactiveState/AttributePreset")
 local BehaviorTree = require("../dist/ReactiveState/BehaviorTree")
@@ -16,6 +16,7 @@ assert(State.VERSION == "0.2.0-dev.1", "packaged VERSION mismatch")
 assert(State.API_VERSION == 2, "packaged API_VERSION mismatch")
 assert(State.SEMANTICS_VERSION == 1, "packaged FRP semantics mismatch")
 assert(Network.PROTOCOL_VERSION == 1, "packaged Network.PROTOCOL_VERSION mismatch")
+assert(Network.EVENT_PROTOCOL_VERSION == 1, "packaged Network.EVENT_PROTOCOL_VERSION mismatch")
 assert(type(AttributePreset) == "table", "AttributePreset did not load")
 assert(type(BehaviorTree) == "table", "BehaviorTree did not load")
 assert(type(Bridge) == "table", "Bridge did not load")
@@ -48,5 +49,39 @@ fire(1, 0)
 assert(held:at(0) == 0, "FRP strict-before boundary failed")
 assert(held:current() == 1, "FRP post-frame current failed")
 host:dispose()
+
+local protocol = Network.defineFRPProtocol({
+	move = {
+		direction = Network.CLIENT_INTENT,
+		validate = function(value)
+			return type(value) == "table" and type(value.delta) == "number"
+		end,
+	},
+	world = {
+		direction = Network.SERVER_TO_CLIENT,
+		validate = function(value)
+			return type(value) == "table" and type(value.revision) == "number"
+		end,
+	},
+}, { id = "package-smoke", rateLimit = false })
+local eventServer = Network.createFRPServer({ protocol = protocol, rateLimit = false })
+local eventClient = Network.createFRPClient({ protocol = protocol })
+local prepared = eventClient:prepareIntent("move", { delta = 1 }, 1)
+assert(prepared.ok and eventClient:commitIntent(prepared.packet).ok, "packaged FRP intent encode failed")
+local inbound = eventServer:reduceInbound(eventServer:initialInboundState(), {
+	clientId = 7,
+	packet = prepared.packet,
+	receivedAt = 0,
+})
+assert(inbound.decision.ok and inbound.decision.sequence == 1, "packaged FRP intent reduce failed")
+local authority = eventServer:encodeEvent(7, "world", { revision = 1 }, 1, 1)
+assert(authority.ok, "packaged FRP authority encode failed")
+local received = eventClient:reduceInbound(eventClient:initialInboundState(), {
+	packet = authority.packet,
+	receivedAt = 0,
+})
+assert(received.decision.ok and received.decision.payload.revision == 1, "packaged FRP authority reduce failed")
+eventClient:dispose()
+eventServer:dispose()
 
 print("PASS studio package smoke")

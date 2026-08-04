@@ -34,12 +34,19 @@
 
 ## RemoteEvent와 multi-client
 
+- `examples/StudioMultiplayer`의 server Script와 client LocalScript를 설치하고 Number of Players를 2 이상으로 실행한다.
+- Server Output의 `[RSMP][v1]|FINAL|...|status=PASS|...|clients=2` 한 줄을 필수 positive evidence로 보존한다.
 - RemoteEvent server/client callback signature를 adapter injection과 맞춘다.
 - 2명 이상의 client에 서로 다른 visibility projection snapshot을 보낸다.
 - duplicate, out-of-order, gap, stale tick, 잘못된 schemaVersion과 변조된 hash를 주입한다.
 - Oversized/deep table과 알 수 없는 field가 server action에 도달하지 않는지 확인한다.
 - Client intent가 validator/authorize를 우회해 server Atom을 직접 설정하지 못하는지 확인한다.
 - Correction 뒤 ack된 input이 제거되고 미확정 input만 stable sequence로 replay되는지 확인한다.
+- FRP intent의 exact packet 재전송은 한 번만 적용되고 `duplicate_intent`가 되는지 확인한다.
+- FRP authority sequence gap이 replay buffer로 복구되고 buffer miss가 새 snapshot epoch로 전환되는지 확인한다.
+- 마지막 client intent 유실은 ack timeout 재전송, 마지막 server event 유실은 heartbeat로 드러나는지 확인한다.
+- `PlayerRemoving` 뒤 Player reference, replay buffer, server tick 상태가 제거되고 재접속 session key가 새로 생기는지 확인한다.
+- Studio Network StressTest의 lag/loss/jitter/variance에서 retry/resync가 수렴하는지 확인한다.
 
 ## Timeline과 성능
 
