@@ -1,6 +1,6 @@
 --!nonstrict
 
--- Behavior is deliberately only an execution facade. It owns no Runtime,
+-- BehaviorTree is deliberately only an execution facade. It owns no Runtime,
 -- scheduler, clock, or authoritative state. Call :tick(ctx) from ordinary
 -- Luau code (usually inside Runtime:step()).
 

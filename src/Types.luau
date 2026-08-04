@@ -1,5 +1,75 @@
 --!strict
 
+export type Occurrence<T> = {
+	time: number,
+	value: T,
+	order: number,
+}
+
+export type Disposable = () -> ()
+
+export type Future<T> = {
+	isNever: (self: Future<T>) -> boolean,
+	force: (self: Future<T>) -> (number, T?),
+	map: <U>(self: Future<T>, mapper: (T) -> U) -> Future<U>,
+	ap: <U>(self: Future<any>, argument: Future<any>) -> Future<U>,
+	bind: <U>(self: Future<T>, mapper: (T) -> Future<U>) -> Future<U>,
+	earlier: (self: Future<T>, other: Future<T>) -> Future<T>,
+	getTime: (self: Future<T>) -> number,
+	getValue: (self: Future<T>) -> T?,
+}
+
+export type Event<T> = {
+	getHost: (self: Event<T>) -> any,
+	occurrences: (self: Event<T>, untilTime: number?) -> { Occurrence<T> },
+	map: <U>(self: Event<T>, mapper: (T) -> U, options: any?) -> Event<U>,
+	mapWithTime: <U>(self: Event<T>, mapper: (T, number) -> U, options: any?) -> Event<U>,
+	filter: (self: Event<T>, predicate: (T) -> boolean, options: any?) -> Event<T>,
+	merge: (self: Event<T>, other: Event<T>, options: any?) -> Event<T>,
+	scan: <S>(self: Event<T>, initialValue: S, reducer: (S, T) -> S, options: any?) -> Event<S>,
+	bind: <U>(self: Event<T>, mapper: (T) -> Event<U>, options: any?) -> Event<U>,
+	join: (self: Event<T>, options: any?) -> any,
+	ap: (self: Event<T>, argument: any, options: any?) -> any,
+	snapshot: (self: Event<T>, behavior: any, combine: ((T, any, number) -> any)?, options: any?) -> any,
+	subscribe: (self: Event<T>, callback: (T, number, Occurrence<T>) -> (), options: any?) -> Disposable,
+}
+
+export type Reactive<T> = {
+	getHost: (self: Reactive<T>) -> any,
+	initial: (self: Reactive<T>) -> T,
+	changes: (self: Reactive<T>) -> Event<T>,
+	current: (self: Reactive<T>) -> T,
+	at: (self: Reactive<T>, time: number) -> T,
+	map: (self: Reactive<T>, mapper: (T) -> any, options: any?) -> any,
+	ap: (self: Reactive<T>, argument: any, options: any?) -> any,
+	bind: (self: Reactive<T>, mapper: (T) -> any, options: any?) -> any,
+	join: (self: Reactive<T>, options: any?) -> any,
+	switcher: (self: Reactive<T>, event: any, options: any?) -> Reactive<T>,
+	subscribe: (self: Reactive<T>, callback: (T, number, Occurrence<T>?) -> (), options: any?) -> Disposable,
+}
+
+export type Behavior<T> = {
+	getHost: (self: Behavior<T>) -> any,
+	at: (self: Behavior<T>, time: number) -> T,
+	current: (self: Behavior<T>) -> T,
+	map: (self: Behavior<T>, mapper: (T) -> any, options: any?) -> any,
+	ap: (self: Behavior<T>, argument: any, options: any?) -> any,
+	switcher: (self: Behavior<T>, event: any, options: any?) -> Behavior<T>,
+	subscribe: (self: Behavior<T>, callback: (T, number, any?) -> (), options: any?) -> Disposable,
+}
+
+export type Host = {
+	source: (self: Host, options: any?) -> (any, (any, number?) -> ()),
+	frame: (self: Host, time: number, callback: ((any) -> ())?) -> any,
+	advanceTo: (self: Host, time: number) -> number,
+	sample: (self: Host, behavior: any, time: number?) -> any,
+	eventFromFuture: (self: Host, future: any, options: any?) -> any,
+	eventFromOccurrences: (self: Host, entries: { any }, options: any?) -> any,
+	now: (self: Host) -> number,
+	getErrors: (self: Host) -> { any },
+	dispose: (self: Host) -> (),
+}
+
 export type ChangeSet = {
 	transactionId: number,
 	tick: number?,

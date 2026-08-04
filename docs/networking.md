@@ -1,5 +1,7 @@
 # Network와 prediction
 
+> 현재 `Network` 모듈은 0.1 `StateRuntime` 호환 확장이다. 정통 FRP Core의 `Event/Reactive/Behavior`를 자동 복제하지 않는다. FRP-native 입력에서는 로컬 packet 도착 시각을 occurrence time으로 쓰고 server tick/sequence는 payload로 유지한다.
+
 Network 모듈은 transport를 열지 않는 순수 protocol 계층이다. RemoteEvent 연결은 `Overdare` adapter가 담당한다. Client가 보내는 값은 authoritative state가 아니라 항상 intent로 처리한다.
 
 ## Schema

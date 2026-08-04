@@ -6,11 +6,18 @@
 
 - `src` tree를 ReactiveState ModuleScript package로 import한다.
 - Server Script와 LocalScript에서 root Core를 각각 require한다.
-- Server와 client Runtime/Atom 값이 서로 다른 메모리인지 확인한다.
+- Server와 client Host/Event graph가 서로 다른 메모리인지 확인한다.
 - Core만 require했을 때 RunService connection과 RemoteEvent listener가 0개인지 확인한다.
 - Asset Drawer로 복사한 clean World에서도 child ModuleScript 경로가 같은지 확인한다.
 
 ## RunService
+
+- `Overdare.attachFRP`가 여러 Signal 입력을 한 phase의 `Host:frame` 하나로 묶는지 확인한다.
+- Signal callback 도착이 right→left여도 `left:merge(right)`가 left→right인지 확인한다.
+- 같은 Signal의 동일 payload occurrence가 모두 보존되는지 확인한다.
+- frame time `t` 직후 `Reactive:at(t)`는 이전 값이고 `current()`는 새 값인지 확인한다.
+- Constant Behavior는 phase 진입 시 한 번, Dynamic Behavior는 advance마다 render되는지 확인한다.
+- 한 Host의 두 번째 active FRP driver가 거부되고 driver dispose 뒤 Host는 계속 동작하는지 확인한다.
 
 - `Stepped`, `Heartbeat`, `RenderStepped`에서 platform이 전달하는 argument와 `deltaIndex`를 확인한다.
 - `Overdare.attach`의 priority/creation 순서가 매 실행 동일한지 확인한다.
@@ -36,6 +43,8 @@
 
 ## Timeline과 성능
 
+- `future/event/reactive/behavior` 전용 7개 FRP workload를 Studio VM에서 실행한다.
+
 - 같은 seed/input으로 두 번 실행한 매 tick `getStateHash()`를 비교한다.
 - Rollback window 끝과 confirmed tick 경계를 확인한다.
 - 180 tick full snapshot의 실제 memory/GC 비용을 대상 기기에서 측정한다.
@@ -44,6 +53,6 @@
 
 ## Release gate
 
-- Git tag, `State.VERSION`, network protocol/schema version과 Asset Store artifact source commit을 기록한다.
+- Git tag, `VERSION`, `API_VERSION`, `SEMANTICS_VERSION`, network protocol/schema version과 Asset Store artifact source commit을 기록한다.
 - Source package와 배포 package에서 같은 test fixture 결과를 확인한다.
 - 지원하지 않는 native physics 완전 rollback과 journal history를 문서에서 약속하지 않는다.

@@ -27,10 +27,11 @@ const markerPath = join(distRoot, ".reactive-state-package.json");
 
 const expectedSourceFiles = [
 	"AttributePreset/init.luau",
-	"Behavior/init.luau",
+	"BehaviorTree/init.luau",
 	"Bridge/init.luau",
 	"Core/Clock.luau",
 	"Core/Codec.luau",
+	"Core/FRP.luau",
 	"Core/Hash.luau",
 	"Core/Runtime.luau",
 	"Debug/init.luau",
@@ -79,6 +80,7 @@ async function readMetadata() {
 	]);
 
 	const studioRequireContracts = [
+		[rootSource, "require(script.Core.FRP)", "root -> Core.FRP"],
 		[rootSource, "require(script.Core.Runtime)", "root -> Core.Runtime"],
 		[rootSource, "require(script.Core.Clock)", "root -> Core.Clock"],
 		[rootSource, "require(script.Core.Codec)", "root -> Core.Codec"],

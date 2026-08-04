@@ -1,143 +1,130 @@
-# ReactiveState
+# OVERDARE Push-Pull FRP
 
-OVERDARE Studio용 Luau-first push-pull 반응형 상태 Runtime이다. 일반 Luau 함수와 제어 흐름은 그대로 두고, 상태·파생값·원자적 변경이 필요한 경계에서만 사용한다.
+Conal Elliott의 2009년 논문 [Push-pull functional reactive programming](http://conal.net/papers/push-pull-frp/)을 기준으로 만든 Luau FRP 라이브러리다. `Atom/Computed`를 FRP라고 다시 부르는 구현이 아니라, 논문의 재귀적 정규형을 공개 타입과 실행 의미로 사용한다.
 
-> 현재 상태: `0.1.0-dev.1` preview. 독립 Luau Runtime에서 검증 중이며 OVERDARE Studio multi-client/Asset Store gate를 통과하기 전에는 1.0으로 배포하지 않는다.
+```text
+Future<A>   ≅ (futureTime, A)
+Reactive<A> = Stepper(initial A, changes Event<A>)
+Event<A>    ≅ Future<Reactive<A>>
+Fun<T, A>   = Constant(A) | Function(T -> A)
+Behavior<A> = Reactive<Fun<Time, A>>
+```
 
-## 특징
+현재 버전은 `0.2.0-dev.1`, API version 2, FRP semantics version 1이다. 독립 Luau CLI에서 의미 테스트와 전용 벤치를 통과했지만 실제 OVERDARE Studio server/client 및 target-device gate 전에는 production-ready로 표시하지 않는다.
 
-- Runtime별로 완전히 격리된 Atom, lazy Computed, post-commit Watch
-- 오류 시 write를 폐기하는 nested atomic transaction
-- dynamic dependency, cycle/cross-Runtime/write-in-Computed 진단
-- 안정적인 watch priority/creation 순서와 Scope disposal
-- 같은 commit 계약을 사용하는 Store와 fixed tick
-- opt-in bounded snapshot history/rollback/replay와 command outbox
-- schema 기반 Network, one-way Bridge, OVERDARE adapter
-- optional Behavior와 AttributePreset facade
-- `io`, `package`, C module, 숨은 Heartbeat/game loop 의존 없음
-
-## 가장 작은 사용법
+## 가장 작은 예제
 
 ```lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local State = require(ReplicatedStorage:WaitForChild("ReactiveState"))
+local FRP = require(ReplicatedStorage:WaitForChild("ReactiveState"))
 
-local runtime = State.create()
-local price = runtime:atom(100, { label = "price" })
-local quantity = runtime:atom(2, { label = "quantity" })
+local host = FRP.newHost()
+local damage, emitDamage = host:source()
+local health = FRP.accumReactive(100, damage:map(function(amount)
+    return function(previous)
+        return math.max(0, previous - amount)
+    end
+end))
 
-local total = runtime:computed(function()
-    return price:get() * quantity:get()
-end, { label = "total" })
-
-local stop = runtime:watch(total, function(value)
-    print("total", value)
+health:subscribe(function(value)
+    print("health", value)
 end)
 
-runtime:transaction(function()
-    price:set(120)
-    quantity:set(3)
+host:frame(1, function()
+    emitDamage(10)
+    emitDamage(5) -- 같은 시각의 occurrence도 제거하지 않는다.
 end)
 
--- 화면/round/match 수명이 끝날 때
-stop()
-runtime:dispose()
+assert(health:at(1) == 100)  -- occurrenceTime < sampleTime
+assert(health:current() == 85) -- frame commit 뒤 운영상 최신값
+
+host:advanceTo(2)
+assert(health:at(2) == 85)
+host:dispose()
 ```
 
-Watch는 transaction의 중간값을 보지 않고 최종값 `360`을 한 번만 본다. 아무도 `total`을 읽거나 watch하지 않으면 Atom write 시 getter를 실행하지 않는다.
+`at(t)`가 정확한 발생 시각에는 이전 값을 반환하는 것은 의도된 의미론이다. `<=`로 바꾸지 않는다.
 
-## 쓰기 ownership
+## Push와 pull
 
-Writable Atom은 애플리케이션의 Domain State Module 안에 숨기고, 외부에는 read-only Source와 action을 공개하는 패턴을 권장한다.
+- `Future`, `Event`, `Reactive`의 이산 occurrence가 변경을 push한다.
+- 활성 `Behavior` phase가 동적 시간 함수일 때만 정확한 sample time으로 pull한다.
+- `Constant` phase는 시간 advance마다 사용자 함수를 다시 실행하지 않는다.
+- 아무 sink나 `Reactive`가 요구하지 않는 Event 파이프라인은 source push 때 mapper를 실행하지 않는다.
+- 한 logical time의 외부 입력은 `host:frame(t, callback)` 하나에 모아야 한다. 닫힌 time은 재개방할 수 없고, 동시간 merge는 callback 도착 순서가 아니라 그래프의 왼쪽 Event가 먼저다.
 
-```lua
-local runtime = State.create()
-local healthAtom = runtime:atom(100, { label = "player.health" })
+논문의 Haskell 구현이 사용하는 laziness, bottom, `unsafePerformIO`, `unamb` thread race를 Luau에서 흉내 내지는 않는다. strict single-threaded Luau에서는 timestamped source, 단조 Host frontier, 닫힌 frame barrier로 같은 denotation을 구현한다. 자세한 대응은 [논문 의미론과 Luau 이식](./docs/push-pull-frp.md)에 있다.
 
-local function damage(amount)
-    runtime:transaction(function()
-        healthAtom:update(function(health)
-            return math.max(0, health - amount)
-        end)
-    end)
-end
+## OVERDARE 연결
 
-return {
-    runtime = runtime,
-    health = healthAtom:asReadonly(),
-    damage = damage,
-}
-```
-
-`asReadonly()`는 같은 실행 환경의 ownership 규율이지 보안 경계가 아니다. Client intent는 서버에서 별도로 검증해야 한다.
-
-## Optional module
-
-Root ModuleScript는 Core만 load한다. 필요한 module만 명시적으로 가져온다.
+엔진 Signal을 각각 즉시 commit하면 같은 엔진 프레임의 동시성이 깨진다. `Overdare.attachFRP`는 입력을 모았다가 RunService phase마다 Host frame 하나로 닫는다.
 
 ```lua
-local Bridge = require(ReplicatedStorage.ReactiveState.Bridge)
-local Network = require(ReplicatedStorage.ReactiveState.Network)
 local Overdare = require(ReplicatedStorage.ReactiveState.Overdare)
-local Behavior = require(ReplicatedStorage.ReactiveState.Behavior)
-local AttributePreset = require(ReplicatedStorage.ReactiveState.AttributePreset)
-local Debug = require(ReplicatedStorage.ReactiveState.Debug)
+local driver = Overdare.attachFRP(host, {
+    phase = "Heartbeat",
+})
+
+local activated, binding = driver:eventFromSignal(button.Activated)
+local frames = driver:frames()
+
+activated:subscribe(function()
+    print("activated")
+end)
+
+binding:dispose()
+driver:dispose() -- Host는 소유하지 않으므로 살아 있다.
 ```
 
-Bridge는 서로 다른 Runtime 사이의 one-way 전달, Network는 server/client schema payload, Overdare는 RunService/Instance/RemoteEvent 경계만 담당한다. 어느 것도 Core에 자동 연결되지 않는다.
+한 Host에는 활성 OVERDARE clock driver를 하나만 둘 수 있다. 멀티플레이에서는 패킷 도착 시각을 Event time으로 쓰고 server tick은 payload 데이터로 보존한다. FRP graph 자체가 복제나 권한 검증을 대신하지 않는다.
 
-## 설치
+## 공개 코어
 
-`src`를 하나의 `ReactiveState` ModuleScript tree로 배치한다. 포함된 [`default.project.json`](./default.project.json)은 `src/init.luau`를 root ModuleScript로, 하위 디렉터리를 optional child로 매핑한다.
+- `Future`: `pure`, `at`, `never`, `map`, `ap`, `bind`, `join`, `earlier`
+- `Event`: `pure`, `never`, `once`, `fromOccurrences`, `map`, `filter`, `merge`, `scan`, `bind`, `join`, `ap`, `snapshot`, `subscribe`; occurrence-aware 확장은 `mapWithTime`
+- `Reactive`: `pure`, `stepper`, `map`, `ap`, `bind`, `join`, `switcher`, `at`, `current`, `subscribe`
+- `Behavior`: `constant`, `fromFunction`, `time`, `map`, `ap`, `lift2`, `lift3`, `stepper`, `switcher`, `at`, `subscribe`
+- `Host`: `source`, `frame`, `advanceTo`, `sample`, `dispose`
 
-Studio에 넣을 검증 가능한 package와 edit-time 설치기를 만들려면 다음을 실행한다.
+논문 정규형의 `Behavior`에는 `bind`/`join`을 제공하지 않는다. 선택적 AI behavior tree는 이름 충돌을 피하려고 `ReactiveState.BehaviorTree`에 있다.
+
+정통 Functor/Monad 법칙을 지키기 위해 `Event.map/bind`와 `Reactive.map/bind` mapper에는 값만 전달한다. occurrence time이 도메인 로직에 필요하면 payload에 넣고, effect/sampling 경계에서는 `mapWithTime` 또는 `snapshot`을 사용한다.
+
+이전 `Atom/Computed/transaction` 구현은 마이그레이션용 `FRP.createStateRuntime()`에 남아 있으며 정통 FRP Core로 취급하지 않는다. 임시 호환 alias `FRP.create()`도 같은 State runtime을 만든다.
+
+## 설치와 검증
 
 ```sh
 node tools/build-studio-package.mjs
 node tools/build-studio-package.mjs --verify
 luau tools/studio-package-smoke.luau
-```
 
-결과는 `dist/ReactiveState`, `dist/StudioInstaller.luau`, `dist/ReactiveState.manifest.json`에 생성된다. 실제 배치·require 확인·업데이트 절차는 [OVERDARE Studio 설치](./docs/studio-install.md)에 있다.
-
-공용 package는 `ReplicatedStorage`에 둘 수 있지만 서버 전용 validator, secret, visibility 정책은 `ServerScriptService` 또는 `ServerStorage`의 애플리케이션 코드에 둔다.
-
-현재 preview의 Timeline은 안전성을 우선해 tick별 full snapshot을 bounded ring에 보존한다. `history.strategy = "snapshot"`만 지원하며, 전략 문서의 journal/patch 최적화는 메모리·성능 gate를 통과한 뒤 추가할 항목이다.
-
-## 테스트
-
-공식 Luau CLI가 PATH에 있을 때:
-
-```sh
 luau tests/run.luau
+luau -O2 tests/run.luau
+luau -O2 --codegen tests/run.luau
 luau-analyze src tests examples benchmarks
 ```
 
-독립 CLI 테스트는 최종 Studio gate를 대체하지 않는다. 배포 전에는 OVERDARE Studio에서 server/client require, Stepped/Heartbeat/RenderStepped, physics sampling, RemoteEvent, multi-client, Scope cleanup을 별도로 검증해야 한다.
-
-현재 자동 검증은 Core 회귀·property·Network·adapter 통합을 포함한 52개 case다.
-
-전략 문서의 10개 성능 workload는 같은 suite를 독립 Luau와 Studio에서 실행하도록 구성했다.
+전용 FRP 벤치:
 
 ```sh
-luau benchmarks/run.luau -a standard O1
-luau -O2 benchmarks/run.luau -a standard O2
-luau --codegen benchmarks/run.luau -a standard codegen
+luau -O1 benchmarks/frp-run.luau -a standard O1
+luau -O2 benchmarks/frp-run.luau -a standard O2
+luau -O2 --codegen benchmarks/frp-run.luau -a standard O2-codegen
 ```
 
-독립 Luau baseline은 구현 회귀 비교용이며 Studio/대상 기기의 절대 성능을 대신하지 않는다. 실행법과 현재 측정 결과는 [성능 전략과 결과](./docs/performance.md)에 있다.
+현재 자동 검증은 110개 test와 7개 Push-Pull FRP workload를 포함한다. CLI 수치는 회귀 baseline이며 Studio/기기 성능을 대신하지 않는다.
 
 ## 문서
 
-- [설계와 참고 구현](./docs/architecture.md)
+- [논문 의미론과 Luau 이식](./docs/push-pull-frp.md)
 - [Core API](./docs/api.md)
-- [Network와 prediction](./docs/networking.md)
-- [결정성·rollback 경계](./docs/determinism.md)
-- [성능 전략과 결과](./docs/performance.md)
+- [아키텍처](./docs/architecture.md)
 - [OVERDARE Studio 설치](./docs/studio-install.md)
-- [OVERDARE Studio 검증 체크리스트](./docs/overdare-checklist.md)
-- [예제](./examples)
+- [성능 전략과 결과](./docs/performance.md)
+- [멀티플레이 Network 경계](./docs/networking.md)
+- [기존 StateRuntime API](./docs/state-runtime.md)
 
 ## 라이선스
 
-MIT. 이 구현은 독립 작성했으며 참고한 프로젝트와 라이선스는 [NOTICE.md](./NOTICE.md)에 정리했다.
+MIT. 논문과 참고 프로젝트의 코드를 복사하지 않은 독립 구현이며 출처와 라이선스는 [NOTICE.md](./NOTICE.md)에 정리했다.

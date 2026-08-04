@@ -1,77 +1,121 @@
-# ReactiveState 아키텍처
+# Push-Pull FRP 아키텍처
 
-ReactiveState는 일반 Luau 제어 흐름을 유지하면서, 선택한 상태 경계에만 반응형 그래프와 원자적 transaction을 적용한다. UI 프레임워크나 게임 루프를 소유하지 않으며 Runtime 인스턴스 사이의 상태도 암묵적으로 공유하지 않는다.
+## Denotation이 먼저다
 
-## Commit 파이프라인
+Core의 기준은 scheduler 구현이 아니라 다음 관찰 함수다.
 
 ```text
-transaction callback
-  -> Atom write를 transaction-local overlay에 stage
-  -> 최종값 검증 및 net-change 계산
-  -> Atom 값을 한 번에 publish
-  -> downstream을 dirty / pending으로 push
-  -> watched Source를 pull하여 안정화
-  -> (priority, stable id) 순서로 post-commit watch 실행
+force  : Future<A>   -> (BoundTime, A)
+occs   : Event<A>    -> ordered [(BoundTime, A)]
+rat    : Reactive<A> -> Time -> A
+at     : Behavior<A> -> Time -> A
 ```
 
-일반 signal 라이브러리의 `batch`는 대개 알림만 미룬다. ReactiveState의 `transaction`은 callback이 실패하면 staged write와 command를 폐기한다. Nested transaction은 가장 바깥 transaction에 합류하며 독립 savepoint가 아니다.
+`rat(stepper(a0, e), t)`는 `e`에서 `occurrenceTime < t`인 마지막 값을 고른다. Event merge는 시간순이며 tie는 왼쪽 occurrence 전체가 먼저다. 이 규칙이 public method, sink, history reconstruction, OVERDARE batching보다 우선한다.
 
-Root transaction은 `mutate → prepare → publish → notify`로 나뉜다. validator, equality, watched Computed, codec처럼 실패할 수 있는 사용자 코드는 prepare가 끝나기 전에 실행한다. Publish는 미리 계산된 값을 교체하는 구간이고, watch 오류는 이미 확정된 상태를 되돌리지 않으며 다음 watch를 계속 실행한다. Watch 중 write는 현재 notification stack에 재진입하지 않고 별도의 queued transaction으로 처리한다.
+## 실행 흐름
 
-## 반응형 그래프
+```text
+OVERDARE Signal / timer / network arrival
+  -> timestamped source queue                         push
+  -> Host:frame(time) barrier
+  -> source Event가 dependent Event를 dirty 표시      push
+  -> 요구된 sink와 Reactive만 Event graph 평가         pull discrete prefix
+  -> Reactive change와 Event occurrence 원자 commit
+  -> active Behavior phase 선택
+  -> Dynamic TimeFunction만 sample time에 평가         pull continuous value
+  -> sink delivery
+```
 
-- Atom은 원본 값과 단조 증가 revision을 소유한다.
-- Computed는 실제로 읽힐 때 계산하고 결과와 dependency revision을 캐시한다.
-- 원본 변경은 getter를 즉시 호출하지 않고 영향을 받은 downstream만 표시한다.
-- `pending` Computed는 upstream revision을 먼저 확인한다. Upstream Computed 결과가 같으면 자기 getter를 실행하지 않는다.
-- 조건부 read가 바뀌면 이전 dependency edge를 제거하고 이번 평가에서 읽은 edge만 남긴다.
-- Computed 평가 중 write와 다른 Runtime Source read는 오류다.
-- 중첩 pull 깊이는 기본 128에서 진단해 host VM의 stack overflow를 피한다. 더 큰 한계는 대상 VM에서 depth probe 후 명시적으로 설정한다.
-- Watch는 계산 노드가 아니라 외부 effect 경계이며 commit이 끝난 뒤에만 실행된다.
+Event node는 dependency와 frame memo를 가진다. source push는 mapper를 즉시 실행하지 않고 dirty 상태만 전달한다. sink나 Reactive가 해당 occurrence를 요구할 때 graph를 pull한다. 한 frame에서 각 node는 한 번 평가된다.
 
-이 조합은 diamond graph의 중간 상태 노출과 불필요한 downstream 재계산을 피한다.
+## 과거 prefix와 동적 Event
 
-## 참고 구현에서 채택한 부분
+Event Monad의 `bind`는 새 inner Event가 선택되기 전에 이미 발생한 occurrence도 버리지 않는다.
 
-- [Alien Signals](https://github.com/stackblitz/alien-signals)와 [Charm](https://github.com/littensy/charm): `pending/dirty` push-pull 및 양방향 dependency link.
-- [Roblox Signals](https://github.com/Roblox/signals): lazy Computed, 명시적인 scope, 같은 computed 결과의 downstream 억제.
-- [Angular Signals](https://github.com/angular/angular/tree/main/packages/core/primitives/signals)와 [Preact Signals](https://github.com/preactjs/signals): producer revision과 link가 마지막으로 본 revision을 분리하는 value versioning.
-- [Fusion](https://github.com/dphfox/Fusion): 재평가 결과와 새 dependency를 후보 상태로 만든 뒤 성공할 때 교체하는 오류 안전성.
-- [Vide](https://github.com/centau/vide): dependency graph와 ownership tree의 분리.
-- [MobX](https://github.com/mobxjs/mobx): deduplicated reaction queue, 동적 dependency diff, idempotent disposal.
-- [Reflex](https://github.com/reflex-frp/reflex)와 [Sodium](https://github.com/SodiumFRP/sodium): frame 안정화와 rank 아이디어. 현재 Atom/Computed Core에는 과도한 rank scheduler를 넣지 않았고, 향후 Event/merge/switch 계층의 참고 기준으로 남긴다.
+```text
+outer @ 5
+inner @ 3
+result @ max(5, 3) = 5
+```
 
-특히 일반 batch 구현과 달리 callback 오류를 실제로 되돌리기 위해 Atom 값은 transaction-local overlay에 먼저 쓴다. Transaction 안의 Computed도 별도 speculative cache와 candidate dependency를 사용하며, 성공한 commit에서 watch가 관찰한 candidate만 graph에 설치한다.
+strict Luau runtime은 source Event의 닫힌 prefix를 보존하고, `map/filter/merge/scan/bind`가 필요할 때 그 prefix를 조합자별로 재구성한다. stateful 조합자의 catch-up은 frame commit에 stage되어 평가 실패 시 state가 바뀌지 않는다. 진단용 과거 cutoff pull은 operational state를 commit하지 않는다. 이미 active한 stream은 incremental frame memo를 사용한다.
 
-## 의도적으로 가져오지 않은 부분
+이 방식은 Haskell lazy list를 복제하지 않으면서 Event denotation과 dormant graph의 demand-driven 실행을 함께 유지한다.
 
-- ModuleScript 전역 active subscriber, scheduler, node ID
-- `os.clock()`을 graph revision으로 사용
-- callback 오류가 나도 이미 쓴 값을 유지하는 notification-only batch
-- Core를 자동으로 Heartbeat/RenderStepped에 연결하는 숨은 game loop
-- deep table proxy와 임의 Atom 자동 replication
-- weak table 또는 GC finalizer에 정확한 disposal을 맡기는 방식
-- Computed 오류를 숨기고 마지막 값을 정상값처럼 반환하는 정책
+## 원자 frame
+
+Host frame은 다음 순서다.
+
+```text
+collect roots
+  -> prepare Event/Reactive/Behavior 결과
+  -> prepare 성공 시 source prefix와 state를 commit
+  -> Event sink와 renderer sink 전달
+```
+
+mapper, reducer, predicate, validator 성격의 사용자 callback은 prepare 안에서 동기식으로 실행된다. 오류나 yield가 발생하면 Host time, source prefix, Reactive current/history, stateful Event state를 commit하지 않는다. commit 이후 sink 오류는 다른 sink를 막지 않고 Host error channel로 격리한다.
+
+동일 logical time에 들어올 수 있는 모든 외부 root는 frame callback 하나에 모아야 한다. 예약된 root도 barrier가 같은 time의 callback root와 합친다. 한 번 commit한 time은 재개방하지 않는다. `Event:merge`의 tie order는 root callback 도착 순서가 아니라 graph의 왼쪽/오른쪽 구조로 결정된다.
+
+## Behavior renderer
+
+```text
+TimeFunction<A> = Constant(A) | Dynamic(Time -> A)
+Behavior<A>     = Reactive<TimeFunction<A>>
+```
+
+Constant phase는 phase 진입 시 한 번만 렌더한다. Dynamic phase는 Host가 앞으로 advance할 때 현재 time으로 pull한다. 새 phase occurrence가 오면 이전 dynamic renderer를 논리적으로 교체한다. 한 frame의 모든 phase occurrence와 같은-object duplicate도 순서대로 렌더한다. 순수 `Behavior:at(t)`는 strict-before라 정확한 switch time에는 이전 phase를 사용하고, renderer callback은 commit 뒤 활성화된 새 phase를 뜻한다.
+
+## graph ownership
+
+Event child는 parent를 strong reference하고 parent의 dependent edge는 weak-key다. 따라서 sink/Reactive/사용자 handle에서 도달 가능한 graph만 push 경로로 남고, 버린 downstream graph는 수거된다. Host dispose는 모든 추적 Event/Reactive의 edge, callback closure, source prefix와 history를 비운다. 살아 있는 Host의 prefix/history는 임의의 과거 inner를 허용하는 Event Monad 의미론 때문에 자동 truncate하지 않는다.
+
+## Improving/unamb를 직접 이식하지 않은 이유
+
+논문 구현의 `Improving`과 `unamb`는 Haskell laziness, bottom, `unsafePerformIO`, preemptive thread race와 kill에 의존한다. Luau coroutine은 strict·협력형이라 같은 연산을 generic pure function으로 안전하게 제공할 수 없다.
+
+대신 Host 경계가 다음 정보를 명시한다.
+
+- source의 exact finite timestamp
+- 앞으로만 움직이는 frontier
+- 같은 time의 root가 더 오지 않는 frame barrier
+- 예약 Future의 정렬된 timestamp
+
+따라서 task 완료 속도로 tie를 정하지 않으며, merge tree의 구조적 왼쪽 우선이 항상 결과를 결정한다. generic public `unamb`나 “아직 모르는 Future 중 더 이른 것”의 비결정적 race API는 제공하지 않는다.
 
 ## 모듈 경계
 
 ```text
-src/init.luau                 Core 진입점
-src/Core/Runtime.luau         Atom/Computed/transaction/watch/Store/Timeline
-src/Core/Clock.luau           수동·고정 clock (수동 advance)
-src/Core/Codec.luau           snapshot 가능한 기본 값 계약
-src/Core/Hash.luau            canonical drift hash
+src/init.luau                 FRP root와 version metadata
+src/Core/FRP.luau            Future/Event/Reactive/TimeFunction/Behavior/Host
+src/Core/Runtime.luau        기존 StateRuntime 호환 계층
+src/Core/Clock.luau          기존 fixed/manual state clock
+src/Core/Codec.luau          serializable data codec
+src/Core/Hash.luau           canonical state hash
 
-src/Bridge/init.luau          Runtime 간 one-way bridge
-src/Network/init.luau         schema/sequence/revision 기반 payload
-src/Overdare/init.luau        RunService/Instance/RemoteEvent 경계
-src/Behavior/init.luau        사용자가 tick하는 선택 facade
-src/AttributePreset/init.luau schema 기반 Attribute 입력
-src/Debug/init.luau           opt-in trace/inspection
+src/Overdare/init.luau       batched FRP driver + 기존 State adapters
+src/Network/init.luau        기존 StateRuntime protocol extension
+src/Bridge/init.luau         기존 StateRuntime bridge extension
+src/BehaviorTree/init.luau   AI behavior tree; FRP Behavior와 별도
+src/AttributePreset/init.luau
+src/Debug/init.luau
 ```
 
-Root ModuleScript는 optional module을 eager `require()`하지 않는다. 따라서 Core만 사용하는 Runtime은 engine connection, network listener, bridge registry, behavior scheduler를 만들지 않는다.
+Root는 engine service에 자동 연결하지 않는다. `Overdare.attachFRP`를 호출해야만 RunService Signal을 연결한다.
 
-## 0.1 상태
+## 멀티플레이 경계
 
-현재 버전은 설계와 독립 Luau 검증을 위한 preview다. 공식 Luau CLI의 회귀/property test와 fake/real Runtime adapter 통합 test, 전략의 10개 성능 workload는 제공하지만, OVERDARE Studio server/client, multi-client, Asset Store 삽입 검증을 통과하기 전에는 1.0이나 production-ready로 표시하지 않는다. Timeline은 현재 bounded full snapshot ring 구현이며 journal/patch history는 아직 제공하지 않는다.
+FRP는 replication protocol이 아니다. 권장 입력 모델은 다음과 같다.
+
+```text
+network packet arrival @ localTime
+  payload = { serverTick, sequence, authoritativeData }
+  -> Event<Packet>
+  -> validate/order/reconcile
+  -> Reactive/Behavior
+```
+
+늦게 도착한 packet의 server tick을 과거 Event time으로 주입하지 않는다. occurrence time은 로컬 도착 시각이고 server tick은 payload다. 같은 packet의 여러 field도 여러 setter가 아니라 packet occurrence 하나로 유지해야 atomicity가 보존된다.
+
+현재 `Network` 모듈은 0.1 StateRuntime extension과의 호환을 위해 남아 있다. FRP-native wire binding은 protocol 계층과 별도 adapter로 다루며 Core denotation에 포함하지 않는다.

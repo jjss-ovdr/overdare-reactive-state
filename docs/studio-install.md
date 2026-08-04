@@ -1,6 +1,6 @@
 # OVERDARE Studio 설치
 
-이 문서는 빌드된 `ReactiveState` source package를 World의 `ReplicatedStorage/ReactiveState`에 설치하는 절차다. 현재 배포물은 `0.1.0-dev.1` preview이며 Asset Store 공개 배포용 최종본이 아니다.
+이 문서는 빌드된 `ReactiveState` source package를 World의 `ReplicatedStorage/ReactiveState`에 설치하는 절차다. 현재 배포물은 `0.2.0-dev.1` preview이며 Asset Store 공개 배포용 최종본이 아니다.
 
 ## 1. 패키지 생성·검증
 
@@ -36,11 +36,12 @@ luau tools/studio-package-smoke.luau
 ReplicatedStorage
 └── ReactiveState (ModuleScript; init.luau)
     ├── AttributePreset (ModuleScript; AttributePreset/init.luau)
-    ├── Behavior (ModuleScript; Behavior/init.luau)
+    ├── BehaviorTree (ModuleScript; BehaviorTree/init.luau)
     ├── Bridge (ModuleScript; Bridge/init.luau)
     ├── Core (Folder)
     │   ├── Clock (ModuleScript)
     │   ├── Codec (ModuleScript)
+    │   ├── FRP (ModuleScript)
     │   ├── Hash (ModuleScript)
     │   └── Runtime (ModuleScript)
     ├── Debug (ModuleScript; Debug/init.luau)
@@ -55,23 +56,24 @@ ReplicatedStorage
 
 ```lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local State = require(ReplicatedStorage:WaitForChild("ReactiveState"))
+local FRP = require(ReplicatedStorage:WaitForChild("ReactiveState"))
 
-assert(State.VERSION == "0.1.0-dev.1")
-assert(State.API_VERSION == 1)
+assert(FRP.VERSION == "0.2.0-dev.1")
+assert(FRP.API_VERSION == 2)
+assert(FRP.SEMANTICS_VERSION == 1)
 
-local runtime = State.create()
-local value = runtime:atom(1)
-local doubled = runtime:computed(function()
-    return value:get() * 2
+local host = FRP.newHost()
+local changes, emit = host:source()
+local value = FRP.stepper(1, changes)
+
+host:frame(1, function()
+    emit(5)
 end)
+assert(value:at(1) == 1)
+assert(value:current() == 5)
+host:dispose()
 
-assert(doubled:get() == 2)
-value:set(5)
-assert(doubled:get() == 10)
-runtime:dispose()
-
-print("ReactiveState Studio require PASS")
+print("Push-Pull FRP Studio require PASS")
 ```
 
 Client에서도 root와 실제 사용할 optional module을 한 번씩 require한다. 그다음 `docs/overdare-checklist.md` 순서로 engine event, RemoteEvent, multi-client, cleanup, Studio benchmark gate를 검증한다.

@@ -3,6 +3,13 @@
 ReactiveState is an independent implementation. Its reactive graph and public
 contracts were informed by these open-source projects and primary sources:
 
+- Conal Elliott, "Push-pull functional reactive programming," Haskell
+  Symposium 2009: <http://conal.net/papers/push-pull-frp/>. The `Future`,
+  `Event`, `Reactive`, `Fun`, and `Behavior` denotations and their algebraic
+  laws are the semantic basis of the 0.2 Core. The strict Luau scheduler and
+  OVERDARE adapters are independently implemented; the paper source code is
+  not distributed with this package.
+
 - Alien Signals (MIT): <https://github.com/stackblitz/alien-signals>
 - Roblox Signals (MIT): <https://github.com/Roblox/signals>
 - Fusion (MIT): <https://github.com/dphfox/Fusion>
@@ -26,5 +33,5 @@ official Creator documentation:
 - RemoteEvent: <https://docs.overdare.com/development/api-reference/classes/remoteevent>
 - Instance: <https://docs.overdare.com/development/api-reference/classes/instance>
 
-No source file from those projects is copied into this repository. Their
+No source file from the paper or those projects is copied into this repository. Their
 licenses and copyright notices remain with their respective projects.

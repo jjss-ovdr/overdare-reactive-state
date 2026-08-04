@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.0-dev.1 - Unreleased
+
+- Replaced the root contract with Conal Elliott's Push-Pull FRP normal form:
+  `Future`, `Event`, `Reactive`, `TimeFunction`, and `Behavior`.
+- Added strict-before sampling, duplicate-preserving stable-left Event merge,
+  Future max/min algebras, Event/Reactive monads, and Behavior applicative.
+- Added a monotonic Host with atomic same-time frames, pushed source dirtiness,
+  demand-driven Event evaluation, scheduled Future occurrences, and explicit
+  renderer lifecycle.
+- Added past-prefix reconstruction so dynamically selected Event streams retain
+  the paper's `max(outerTime, innerTime)` semantics.
+- Added an OVERDARE FRP driver that batches multiple Signals into one phase
+  frame; renamed the optional AI facade to `BehaviorTree`.
+- Added paper truth-table, randomized denotational, late-composition, atomicity,
+  and OVERDARE batching tests plus seven dedicated O1/O2/codegen benchmarks.
+- Made closed logical times single-commit, coalesced scheduled and callback roots,
+  and supported dynamically constructed Event past/same/future occurrences.
+- Made diagnostic prefix pulls read-only, preserved every Behavior phase
+  occurrence, fixed nil scan state and prepare-time Reactive construction, and
+  added weak downstream edges plus full Host disposal cleanup.
+- Kept lawful Event/Reactive map and bind callbacks value-only; occurrence-time
+  observation is an explicit `mapWithTime`/`snapshot` extension.
+- Kept the 0.1 Atom/Computed engine as the explicit `createStateRuntime()`
+  compatibility extension; it is no longer described as the FRP Core.
+
 ## 0.1.0-dev.1 - Unreleased
 
 - Initial Luau-first push-pull reactive runtime.

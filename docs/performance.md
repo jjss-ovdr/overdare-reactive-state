@@ -1,6 +1,32 @@
 # 성능 전략과 결과
 
-성능 suite는 전략 문서 13.3의 10개 workload를 독립 Luau와 OVERDARE Studio에서 같은 코드로 실행한다. 절대 시간 합격선은 대상 기기에서 Studio baseline을 얻은 뒤 정한다. 현재 gate는 정확성 invariant와 크기 증가에 따른 추세다.
+## Push-Pull FRP 전용 suite
+
+FRP Core는 기존 Atom/Computed suite와 별도로 다음 7개 workload를 측정한다.
+
+| Workload | 검증하는 경로 |
+|---|---|
+| `future/max_sync` | Future apply의 `max` time과 값 결합 |
+| `event/stable_merge_ties` | 동시간 duplicate와 structural-left merge |
+| `event/push_pull_pipeline` | source push, 요구된 mapper chain pull |
+| `reactive/applicative_simultaneous` | 함수 변화 후 값 변화의 동시간 두 occurrence |
+| `behavior/continuous_pull` | Dynamic phase의 monotonic sampling |
+| `behavior/switcher_churn` | Reactive phase switch와 renderer 교체 |
+| `event/dormant_quiescence` | consumer 없는 mapper가 0회 실행되는지 |
+
+```sh
+luau -O1 benchmarks/frp-run.luau -a standard O1
+luau -O2 benchmarks/frp-run.luau -a standard O2
+luau -O2 --codegen benchmarks/frp-run.luau -a standard O2-codegen
+```
+
+2026-08-04 실행에서 세 모드 모두 7개 correctness gate를 통과했다. 전체 median은 [Push-Pull FRP baseline](../benchmarks/results/2026-08-04-push-pull-frp.md)에 보존했다. CLI baseline은 구현 회귀 비교용이며 Studio/대상 기기의 절대 합격선이 아니다.
+
+Event dependency는 weak-key라 버린 downstream graph는 source가 붙잡지 않는다. 반면 살아 있는 Host의 source prefix와 Reactive history는 Event Monad의 임의 과거 선택을 위해 의도적으로 보존한다. 장기 메모리 gate는 match/session epoch 종료 시 `Host:dispose()`까지 포함해 측정해야 한다.
+
+## 기존 StateRuntime suite
+
+0.1 Atom/Computed 호환 계층은 기존 전략 문서 13.3의 10개 workload를 계속 실행한다. 이 결과는 StateRuntime 확장 baseline이며 정통 FRP Core 성능과 합쳐서 보고하지 않는다.
 
 ## 측정 범위
 

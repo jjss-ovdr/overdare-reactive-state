@@ -1,6 +1,7 @@
 --!nonstrict
 
 local Overdare = require("../src/Overdare")
+local FRP = require("../src/Core/FRP")
 
 local function fakeSignal()
 	local signal = { listeners = {} }
@@ -69,6 +70,121 @@ local function fakeAtom(runtime, initial)
 end
 
 return function(h)
+	h:test("Overdare FRP driver batches signals and preserves structural tie order", function()
+		local host = FRP.newHost()
+		local phase = fakeSignal()
+		local leftSignal = fakeSignal()
+		local rightSignal = fakeSignal()
+		local driver = Overdare.attachFRP(host, { signal = phase, phase = "Heartbeat" })
+		local left = driver:eventFromSignal(leftSignal)
+		local right = driver:eventFromSignal(rightSignal)
+		local observed = {}
+		left:merge(right):subscribe(function(value, time)
+			observed[#observed + 1] = { time, value }
+		end)
+
+		rightSignal:Fire("right")
+		leftSignal:Fire("left")
+		h:equal(#observed, 0)
+		phase:Fire(1)
+		h:deepEqual(observed, { { 1, "left" }, { 1, "right" } })
+		driver:dispose()
+		host:dispose()
+	end)
+
+	h:test("Overdare FRP driver preserves duplicates and strict-before state", function()
+		local host = FRP.newHost()
+		local phase = fakeSignal()
+		local input = fakeSignal()
+		local driver = Overdare.attachFRP(host, { signal = phase })
+		local event = driver:eventFromSignal(input)
+		local state = FRP.stepper(0, event)
+		local occurrences = {}
+		event:subscribe(function(value)
+			occurrences[#occurrences + 1] = value
+		end)
+		input:Fire(1)
+		input:Fire(1)
+		phase:Fire(2)
+		h:deepEqual(occurrences, { 1, 1 })
+		h:equal(state:at(2), 0)
+		h:equal(state:current(), 1)
+		phase:Fire(0.5)
+		h:equal(state:at(2.5), 1)
+		driver:dispose()
+		host:dispose()
+	end)
+
+	h:test("Overdare FRP binding disposal cancels pending input and driver leaves Host alive", function()
+		local host = FRP.newHost()
+		local phase = fakeSignal()
+		local input = fakeSignal()
+		local driver = Overdare.attachFRP(host, { signal = phase })
+		local event, binding = driver:eventFromSignal(input)
+		local observed = {}
+		event:subscribe(function(value)
+			observed[#observed + 1] = value
+		end)
+		input:Fire("pending")
+		binding:dispose()
+		phase:Fire(1)
+		h:equal(#observed, 0)
+		driver:dispose()
+
+		local source, fire = host:source()
+		local live = {}
+		source:subscribe(function(value)
+			live[#live + 1] = value
+		end)
+		fire("still-alive", 2)
+		host:advanceTo(2)
+		h:deepEqual(live, { "still-alive" })
+		host:dispose()
+	end)
+
+	h:test("Overdare FRP driver isolates mapper errors under continue policy", function()
+		local host = FRP.newHost()
+		local phase = fakeSignal()
+		local badSignal = fakeSignal()
+		local goodSignal = fakeSignal()
+		local errors = {}
+		local driver = Overdare.attachFRP(host, {
+			signal = phase,
+			errorPolicy = "continue",
+			onError = function(detail)
+				errors[#errors + 1] = detail
+			end,
+		})
+		driver:eventFromSignal(badSignal, { map = function()
+			error("bad projection")
+		end })
+		local good = driver:eventFromSignal(goodSignal)
+		local observed = {}
+		good:subscribe(function(value)
+			observed[#observed + 1] = value
+		end)
+		badSignal:Fire("bad")
+		goodSignal:Fire("good")
+		phase:Fire(1)
+		h:equal(#errors, 1)
+		h:equal(errors[1].stage, "signal-map")
+		h:deepEqual(observed, { "good" })
+		driver:dispose()
+		host:dispose()
+	end)
+
+	h:test("Overdare allows only one active FRP driver per Host", function()
+		local host = FRP.newHost()
+		local first = Overdare.attachFRP(host, { signal = fakeSignal() })
+		h:throws(function()
+			Overdare.attachFRP(host, { signal = fakeSignal() })
+		end, "only one")
+		first:dispose()
+		local second = Overdare.attachFRP(host, { signal = fakeSignal() })
+		second:dispose()
+		host:dispose()
+	end)
+
 	h:test("Overdare fixed attach uses stable callback priority and disposes", function()
 		local runtime = fakeRuntime()
 		local signal = fakeSignal()

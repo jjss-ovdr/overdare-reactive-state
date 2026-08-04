@@ -1,7 +1,7 @@
 --!nonstrict
 
 local AttributePreset = require("../src/AttributePreset")
-local Behavior = require("../src/Behavior")
+local Behavior = require("../src/BehaviorTree")
 local Bridge = require("../src/Bridge")
 local Debug = require("../src/Debug")
 

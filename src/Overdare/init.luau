@@ -38,6 +38,44 @@ export type Status = {
 	value: any?,
 }
 
+export type FRPFrame = {
+	phase: Phase,
+	time: number,
+	delta: number,
+	arguments: any,
+}
+
+export type FRPSignalOptions = {
+	map: ((...any) -> any)?,
+	label: string?,
+}
+
+export type FRPDriverOptions = {
+	phase: Phase?,
+	signal: any?,
+	runService: any?,
+	getRunService: (() -> any)?,
+	getSignal: ((any, Phase) -> any)?,
+	getDelta: ((...any) -> number)?,
+	getTime: ((number, number, ...any) -> number)?,
+	errorPolicy: ("raise" | "continue" | "disconnect")?,
+	onError: ((any) -> ())?,
+	scope: any?,
+	label: string?,
+}
+
+export type FRPBinding = {
+	dispose: (self: FRPBinding) -> (),
+	Disconnect: (self: FRPBinding) -> (),
+}
+
+export type FRPDriver = {
+	eventFromSignal: (self: FRPDriver, signal: any, options: FRPSignalOptions?) -> (any, FRPBinding),
+	frames: (self: FRPDriver) -> any,
+	dispose: (self: FRPDriver) -> (),
+	Disconnect: (self: FRPDriver) -> (),
+}
+
 local VALID_PHASES: { [string]: boolean } = {
 	Stepped = true,
 	Heartbeat = true,
@@ -47,6 +85,7 @@ local VALID_PHASES: { [string]: boolean } = {
 local DEFAULT_MAX_SUBSTEPS = 8
 local DEFAULT_MAX_PAYLOAD_DEPTH = 16
 local DEFAULT_MAX_PAYLOAD_ENTRIES = 2048
+local ACTIVE_FRP_DRIVERS = setmetatable({}, { __mode = "k" })
 
 local function isFinite(value: number): boolean
 	return value == value and value ~= math.huge and value ~= -math.huge
@@ -327,6 +366,271 @@ local function extractDelta(phase: Phase, options: any, ...: any): number
 		error(string.format("RunService.%s delta must be a finite, non-negative number", phase), 3)
 	end
 	return delta
+end
+
+local function assertFRPHost(host: any)
+	assert(type(host) == "table", "Overdare.attachFRP requires an FRP Host")
+	assert(type(host.frame) == "function", "FRP Host must implement :frame(time, callback)")
+	assert(type(host.source) == "function", "FRP Host must implement :source()")
+	assert(type(host.now) == "function", "FRP Host must implement :now()")
+end
+
+local function packArguments(...: any): any
+	return { n = select("#", ...), ... }
+end
+
+local function runSynchronous(callback: (...any) -> any, ...: any): (boolean, any)
+	local arguments = packArguments(...)
+	local thread = coroutine.create(function()
+		return callback(table.unpack(arguments, 1, arguments.n))
+	end)
+	local resumed = packArguments(coroutine.resume(thread))
+	if not resumed[1] then
+		return false, resumed[2]
+	end
+	if coroutine.status(thread) ~= "dead" then
+		return false, "OVERDARE FRP callbacks may not yield"
+	end
+	return true, resumed[2]
+end
+
+local FRPDriver = {}
+FRPDriver.__index = FRPDriver
+
+function FRPDriver:eventFromSignal(signal: any, options: FRPSignalOptions?): (any, any)
+	if self._disposed then
+		error("OVERDARE FRP driver is disposed", 2)
+	end
+	options = options or {}
+	if options.map ~= nil and type(options.map) ~= "function" then
+		error("eventFromSignal map must be a function", 2)
+	end
+
+	local event, fire = self._host:source({ label = options.label })
+	self._nextBindingId += 1
+	local binding = {
+		_id = self._nextBindingId,
+		_active = true,
+		_driver = self,
+		_connection = nil,
+	}
+
+	function binding:dispose()
+		if not self._active then
+			return
+		end
+		self._active = false
+		local driver = self._driver
+		driver._bindings[self] = nil
+		local retained = {}
+		for _, entry in ipairs(driver._pending) do
+			if entry.binding ~= self then
+				retained[#retained + 1] = entry
+			end
+		end
+		driver._pending = retained
+		local connection = self._connection
+		self._connection = nil
+		if connection ~= nil then
+			disposeOne(connection)
+		end
+	end
+	binding.Disconnect = binding.dispose
+	binding.disconnect = binding.dispose
+	binding.Destroy = binding.dispose
+
+	local function receive(...: any)
+		if self._disposed or not binding._active then
+			return
+		end
+		local arguments = packArguments(...)
+		local value
+		if options.map ~= nil then
+			local ok, result = runSynchronous(options.map, table.unpack(arguments, 1, arguments.n))
+			if not ok then
+				self:_handleError(result, "signal-map", 1)
+				return
+			end
+			value = result
+		elseif arguments.n == 1 then
+			value = arguments[1]
+		else
+			value = arguments
+		end
+		self._pending[#self._pending + 1] = {
+			binding = binding,
+			fire = fire,
+			value = value,
+		}
+	end
+
+	binding._connection = connectSignal(signal, receive)
+	self._bindings[binding] = true
+	return event, binding
+end
+
+function FRPDriver:frames(): any
+	return self._frames
+end
+
+function FRPDriver:_handleError(message: any, stage: string, droppedCount: number)
+	local detail = {
+		stage = stage,
+		message = tostring(message),
+		droppedCount = droppedCount,
+		phase = self._phase,
+	}
+	if type(self._options.onError) == "function" then
+		self._options.onError(detail)
+	end
+	if self._errorPolicy == "disconnect" then
+		self:dispose()
+		return
+	elseif self._errorPolicy == "continue" then
+		return
+	end
+	error(message, 0)
+end
+
+function FRPDriver:_flush(arguments: any)
+	if self._disposed then
+		return
+	end
+	local currentTime = self._host:now()
+	local timingOk, timing = runSynchronous(function()
+		local delta = extractDelta(self._phase, self._options, table.unpack(arguments, 1, arguments.n))
+		local time
+		if type(self._options.getTime) == "function" then
+			time = self._options.getTime(currentTime, delta, table.unpack(arguments, 1, arguments.n))
+		else
+			time = currentTime + delta
+		end
+		return { delta = delta, time = time }
+	end)
+	if not timingOk then
+		local droppedCount = #self._pending
+		self._pending = {}
+		self:_handleError(timing, "clock", droppedCount)
+		return
+	end
+	local delta = timing.delta
+	local time = timing.time
+	if type(time) ~= "number" or not isFinite(time) or time <= currentTime then
+		local droppedCount = #self._pending
+		self._pending = {}
+		self:_handleError("FRP driver time must be finite and strictly increasing", "clock", droppedCount)
+		return
+	end
+
+	local pending = self._pending
+	self._pending = {}
+	local frameValue: FRPFrame = {
+		phase = self._phase,
+		time = time,
+		delta = delta,
+		arguments = arguments,
+	}
+	local ok, message = pcall(function()
+		self._host:frame(time, function()
+			for _, entry in ipairs(pending) do
+				if entry.binding._active then
+					entry.fire(entry.value)
+				end
+			end
+			self._fireFrame(frameValue)
+		end)
+	end)
+	if not ok then
+		self:_handleError(message, "host-frame", #pending)
+	end
+end
+
+function FRPDriver:dispose()
+	if self._disposed then
+		return
+	end
+	self._disposed = true
+	ACTIVE_FRP_DRIVERS[self._host] = nil
+	self._pending = {}
+	local bindings = {}
+	for binding in pairs(self._bindings) do
+		bindings[#bindings + 1] = binding
+	end
+	local firstFailure = nil
+	for _, binding in ipairs(bindings) do
+		local ok, message = pcall(binding.dispose, binding)
+		if not ok and firstFailure == nil then
+			firstFailure = message
+		end
+	end
+	self._bindings = {}
+	local clockConnection = self._clockConnection
+	self._clockConnection = nil
+	if clockConnection ~= nil then
+		local ok, message = pcall(disposeOne, clockConnection)
+		if not ok and firstFailure == nil then
+			firstFailure = message
+		end
+	end
+	if firstFailure ~= nil then
+		error(firstFailure, 0)
+	end
+end
+
+FRPDriver.Disconnect = FRPDriver.dispose
+FRPDriver.disconnect = FRPDriver.dispose
+FRPDriver.Destroy = FRPDriver.dispose
+
+function Overdare.attachFRP(host: any, options: any?): any
+	assertFRPHost(host)
+	options = options or {}
+	assert(type(options) == "table", "Overdare.attachFRP options must be a table")
+	if ACTIVE_FRP_DRIVERS[host] ~= nil then
+		error("an FRP Host may have only one active OVERDARE driver", 2)
+	end
+	local phase = assertPhase(options.phase)
+	local errorPolicy = options.errorPolicy or "raise"
+	if errorPolicy ~= "raise" and errorPolicy ~= "continue" and errorPolicy ~= "disconnect" then
+		error("errorPolicy must be 'raise', 'continue', or 'disconnect'", 2)
+	end
+	if errorPolicy == "continue" and type(options.onError) ~= "function" then
+		error("errorPolicy 'continue' requires onError", 2)
+	end
+	if options.onError ~= nil and type(options.onError) ~= "function" then
+		error("onError must be a function", 2)
+	end
+
+	local runService = if options.signal ~= nil then nil else resolveRunService(options)
+	local phaseSignal = resolvePhaseSignal(runService, phase, options)
+	local frames, fireFrame = host:source({ label = options.label or ("overdare." .. phase) })
+	local driver = setmetatable({
+		_host = host,
+		_options = options,
+		_phase = phase,
+		_errorPolicy = errorPolicy,
+		_frames = frames,
+		_fireFrame = fireFrame,
+		_pending = {},
+		_bindings = {},
+		_nextBindingId = 0,
+		_clockConnection = nil,
+		_disposed = false,
+	}, FRPDriver)
+	ACTIVE_FRP_DRIVERS[host] = driver
+	local ok, connectionOrError = pcall(connectSignal, phaseSignal, function(...: any)
+		driver:_flush(packArguments(...))
+	end)
+	if not ok then
+		ACTIVE_FRP_DRIVERS[host] = nil
+		error(connectionOrError, 2)
+	end
+	driver._clockConnection = connectionOrError
+	if options.scope ~= nil then
+		local add = readMember(options.scope, "add")
+		assert(type(add) == "function", "scope must implement :add(disposable)")
+		add(options.scope, driver)
+	end
+	return driver
 end
 
 local function notifyOverflow(runtime: any, options: any, event: OverflowEvent)

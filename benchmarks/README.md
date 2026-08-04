@@ -1,6 +1,18 @@
 # 성능 벤치마크
 
-전략 문서 13.3의 10개 workload를 동일한 engine-neutral suite로 측정한다. 각 case는 graph/setup, steady-state 실행, correctness 검증, cleanup을 분리하며 steady-state 수치에는 assertion, `getStateHash()`, 출력 시간이 들어가지 않는다.
+## Push-Pull FRP Core
+
+```sh
+luau -O1 benchmarks/frp-run.luau -a standard O1
+luau -O2 benchmarks/frp-run.luau -a standard O2
+luau -O2 --codegen benchmarks/frp-run.luau -a standard O2-codegen
+```
+
+`FRPSuite.luau`는 Future/Event/Reactive/Behavior에 전용인 7개 workload와 각 correctness assertion을 실행한다. `smoke`, `standard` profile을 지원한다. 현재 결과는 [`results/2026-08-04-push-pull-frp.md`](./results/2026-08-04-push-pull-frp.md)에 있다.
+
+## 기존 StateRuntime 호환 baseline
+
+이전 전략 문서 13.3의 10개 workload를 동일한 engine-neutral suite로 측정한다. 이 결과는 `Atom/Computed` 호환 계층의 baseline이지 FRP Core의 성능이라고 부르지 않는다.
 
 ## 독립 Luau
 

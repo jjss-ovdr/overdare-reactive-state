@@ -1,5 +1,7 @@
 # 결정성·Rollback 경계
 
+> 이 문서는 `createStateRuntime()` 호환 계층의 Timeline/rollback 계약이다. Push-Pull FRP Core의 시간·occurrence 의미론은 [`push-pull-frp.md`](./push-pull-frp.md)를 참고한다.
+
 Rollback을 켠 Runtime 안에서는 다음 데이터가 Runtime 계약 안에 있어야 한다.
 
 - 권위 있는 Atom/Store 원본 상태

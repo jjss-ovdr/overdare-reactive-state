@@ -1,15 +1,17 @@
 --!nonstrict
 
--- ReactiveState's root intentionally loads only the synchronous Core and its
--- pure utilities. Bridge, Network, Overdare, Behavior, AttributePreset, and
--- Debug remain optional child ModuleScripts.
+-- The package root is the Conal-style Push-Pull FRP API. The previous
+-- Atom/Computed runtime remains available as an explicitly named compatibility
+-- extension while projects migrate; it is not the FRP denotation.
 
+local FRP: any
 local Runtime
 local Clock
 local Codec
 local Hash
 
 if script ~= nil then
+	FRP = require(script.Core.FRP)
 	Runtime = require(script.Core.Runtime)
 	Clock = require(script.Core.Clock)
 	Codec = require(script.Core.Codec)
@@ -34,6 +36,7 @@ else
 		end
 		error("ReactiveState could not load Core/" .. name .. ": " .. table.concat(messages, " | "), 0)
 	end
+	FRP = requireCore("FRP")
 	Runtime = requireCore("Runtime")
 	Clock = requireCore("Clock")
 	Codec = requireCore("Codec")
@@ -80,20 +83,33 @@ export type Scope = {
 
 export type Runtime = any
 
-local State = {
-	VERSION = "0.1.0-dev.1",
-	API_VERSION = 1,
-	clock = Clock,
-	codec = Codec,
-	hash = Hash,
-}
+export type Host = any
+export type Event<T> = any
+export type Reactive<T> = any
+export type Behavior<T> = any
+export type Future<T> = any
+export type TimeFunction<T> = any
 
-function State.create(options)
+FRP.VERSION = "0.2.0-dev.1"
+FRP.API_VERSION = 2
+FRP.SEMANTICS_VERSION = 1
+FRP.clock = Clock
+FRP.codec = Codec
+FRP.hash = Hash
+FRP.StateRuntime = Runtime
+
+-- Deprecated compatibility alias for the pre-FRP State runtime. New FRP code
+-- starts with newHost(); existing 0.1 projects can migrate incrementally.
+function FRP.create(options)
 	return Runtime.new(options)
 end
 
-function State.isRuntime(value): boolean
+function FRP.createStateRuntime(options)
+	return Runtime.new(options)
+end
+
+function FRP.isRuntime(value): boolean
 	return type(value) == "table" and Runtime.isRuntime(value)
 end
 
-return State
+return FRP
