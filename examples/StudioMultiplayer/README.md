@@ -71,14 +71,28 @@ ReplicatedStorage
 └── ReactiveState
 
 ServerScriptService
-└── RSMP_Server (Script)
+└── RSMP_Server (Script; Enabled = true)
     └── Source = examples/StudioMultiplayer/Server.server.luau
 
 StarterPlayer
 └── StarterPlayerScripts
-    └── RSMP_Client (LocalScript)
+    └── RSMP_Client (LocalScript; Enabled = true)
         └── Source = examples/StudioMultiplayer/Client.client.luau
 ```
+
+Do not rely on a newly-created BaseScript's default properties. Before Play,
+verify the exact class, parent, `Enabled == true`, and normalized source hash of
+both objects. The generated `dist/ReactiveState.manifest.json` contains the
+machine-readable `validationHarness.objects` contract with these values and the
+source SHA-256 for each script. The harness is temporary QA code: never include
+it in a saved or published World.
+
+Stop every existing Play process before installation. Create both scripts with
+`Enabled = false`, set their complete Source and parents, then enable both only
+after the package and scripts are ready. Start a fresh Play session afterward;
+installing into `StarterPlayerScripts` after clients have joined does not satisfy
+this gate. Each client must contain the copied
+`Players/<LocalPlayer>/PlayerScripts/RSMP_Client` LocalScript.
 
 The server creates `RSMP_State`, `RSMP_FRP`, and `RSMP_Control` RemoteEvents in
 `ReplicatedStorage` at runtime. It refuses to reuse objects with those names, so
@@ -89,7 +103,8 @@ cover real replication startup ordering.
 
 1. In the Play tab test options, set **Number of Players** to at least `2`.
 2. Start Play and leave the server and both client windows open.
-3. Read the server Output. Client Output contains diagnostics, but only the
+3. Require one server and two client `BOOT ... stage=entry` lines. Read the
+   server Output. Client Output contains diagnostics, but only the
    server emits the release-gate result.
 4. Stop the test after one `FINAL` line appears.
 
@@ -100,11 +115,14 @@ Success is exactly one line shaped like:
 ```
 
 Runtime assertions and timeouts print `status=FAIL` and raise an error. A
-startup error such as a missing API can terminate before the orchestrator emits
-`FINAL`; that is also a failure. Never accept a run merely because no FAIL line
-appeared—the positive final PASS line is mandatory. Preserve the Studio version,
-package manifest SHA-256, OS/device, server Output, and both client Outputs with
-the result.
+startup error prints a server `FINAL ... status=FAIL ... stage=startup` or a
+client `CLIENT_FAIL ... stage=startup` line. If every `[RSMP]` line is absent,
+the scripts did not start: re-check class, parent, `Enabled`, installed source,
+and the client-side `Players/<LocalPlayer>/PlayerScripts/RSMP_Client` copy. That
+state is `HARNESS_NOT_STARTED`, not a RemoteEvent result. Never accept a run
+merely because no FAIL line appeared—the positive final PASS line is mandatory.
+Preserve the Studio version, package manifest SHA-256, OS/device, preflight
+object properties, server Output, and both client Outputs with the result.
 
 ## Automated assertions
 

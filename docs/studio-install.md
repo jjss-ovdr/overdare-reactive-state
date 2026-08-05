@@ -19,7 +19,8 @@ luau tools/studio-package-smoke.luau
 
 - `dist/ReactiveState/`: Runtime에 포함할 Luau source tree
 - `dist/StudioInstaller.luau`: edit-time 자동 설치기
-- `dist/ReactiveState.manifest.json`: 파일 해시와 Studio object mapping
+- `dist/ReactiveState.manifest.json`: 파일 해시, Studio package object mapping,
+  임시 RSMP 검증 하네스의 class/path/Enabled/source-hash 계약
 - `dist/ReactiveState.project.json`: source-tree sync 도구용 최소 project mapping
 
 빌더는 standalone CLI 분석용 root type witness 경로 `./src/Types`를 Studio package에서 `script.Types`로 정확히 한 번 바꾼다. 런타임 로직은 바꾸지 않으며, manifest hash와 installer에는 변환된 Studio source가 들어간다. `--verify`는 이 target-specific 변환까지 대조한다.
@@ -34,6 +35,10 @@ luau tools/studio-package-smoke.luau
 4. 버전·protocol·package SHA-256을 root attributes에 기록한다.
 
 기존 `ReactiveState`가 있거나 source 쓰기 권한이 없으면 아무것도 덮어쓰지 않고 실패한다. 자동 설치를 지원하지 않는 Studio 빌드에서는 `dist/ReactiveState.manifest.json`의 `studioObjects` 배열대로 object를 만든 뒤 각 `sourcePath`의 내용을 대응하는 ModuleScript Source에 복사한다.
+
+동일 manifest의 `validationHarness`는 런타임 package 설치 대상이 아니다. disposable
+World에서 멀티클라이언트 검증을 할 때만 두 BaseScript를 정확한 class/path로 만들고,
+`properties.Enabled == true`와 정규화된 source SHA-256을 확인하는 QA 계약이다.
 
 정상 object tree는 다음과 같다.
 

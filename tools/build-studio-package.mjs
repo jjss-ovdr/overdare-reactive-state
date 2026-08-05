@@ -27,6 +27,25 @@ const packageRoot = join(distRoot, PACKAGE_NAME);
 const manifestPath = join(distRoot, `${PACKAGE_NAME}.manifest.json`);
 const markerPath = join(distRoot, ".reactive-state-package.json");
 
+const validationHarnessDefinitions = [
+	{
+		studioPath: "ServerScriptService/RSMP_Server",
+		className: "Script",
+		sourcePath: "examples/StudioMultiplayer/Server.server.luau",
+		properties: { Enabled: true },
+		runtimePath: "ServerScriptService/RSMP_Server",
+		role: "server",
+	},
+	{
+		studioPath: "StarterPlayer/StarterPlayerScripts/RSMP_Client",
+		className: "LocalScript",
+		sourcePath: "examples/StudioMultiplayer/Client.client.luau",
+		properties: { Enabled: true },
+		runtimePath: "Players/<LocalPlayer>/PlayerScripts/RSMP_Client",
+		role: "client",
+	},
+];
+
 const expectedSourceFiles = [
 	"AttributePreset/init.luau",
 	"BehaviorTree/init.luau",
@@ -427,6 +446,37 @@ function textFileRecord(path, contents) {
 	};
 }
 
+async function buildValidationHarnessManifest() {
+	const objects = [];
+	for (const definition of validationHarnessDefinitions) {
+		invariant(definition.properties.Enabled === true, `Studio multiplayer ${definition.role} must be enabled`);
+		const source = normalizeText(await readFile(join(projectRoot, definition.sourcePath), "utf8"));
+		invariant(
+			source.includes(`bootstrapLine("BOOT", { "role=${definition.role}", "stage=entry" })`),
+			`Studio multiplayer ${definition.role} BOOT marker is missing`
+		);
+		if (definition.role === "server") {
+			invariant(source.includes('line("FINAL", {'), "Studio multiplayer server FINAL marker is missing");
+		} else {
+			invariant(source.includes('localLine("READY",'), "Studio multiplayer client READY marker is missing");
+		}
+		objects.push({
+			...definition,
+			source: textFileRecord(definition.sourcePath, source),
+		});
+	}
+
+	return {
+		formatVersion: 1,
+		temporaryOnly: true,
+		installBeforePlay: true,
+		installPolicy: "trusted-edit-time-only; never save or publish the harness",
+		objects,
+		requiredEntryMarker: "[RSMP][v1]|BOOT|",
+		requiredServerFinal: "[RSMP][v1]|FINAL|...|status=PASS|...|failed=0|clients=2",
+	};
+}
+
 async function checkNormalization() {
 	const files = await assertSourceLayout();
 	const lfRecords = [];
@@ -453,6 +503,7 @@ async function build() {
 	const files = await assertSourceLayout();
 	const studioObjects = buildStudioObjects(files);
 	const metadata = await readMetadata(studioObjects);
+	const validationHarness = await buildValidationHarnessManifest();
 	await prepareDist();
 	await cp(sourceRoot, packageRoot, { recursive: true, force: false, errorOnExist: true });
 	await Promise.all(files.map(async (file) => {
@@ -509,6 +560,7 @@ async function build() {
 		},
 		files: fileRecords,
 		studioObjects,
+		validationHarness,
 		artifacts,
 		excludedFromRuntimePackage: ["benchmarks", "docs", "examples", "tests", "tools"],
 	};
@@ -525,6 +577,7 @@ async function verify() {
 	const files = await assertSourceLayout();
 	const studioObjects = buildStudioObjects(files);
 	const metadata = await readMetadata(studioObjects);
+	const validationHarness = await buildValidationHarnessManifest();
 	invariant(await pathExists(manifestPath), "Package manifest is missing; run the builder first");
 	const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 
@@ -551,6 +604,10 @@ async function verify() {
 	invariant(
 		JSON.stringify(studioObjects) === JSON.stringify(manifest.studioObjects),
 		"Studio object mapping mismatch"
+	);
+	invariant(
+		JSON.stringify(validationHarness) === JSON.stringify(manifest.validationHarness),
+		"Studio multiplayer validation harness mapping mismatch"
 	);
 
 	for (const file of files) {

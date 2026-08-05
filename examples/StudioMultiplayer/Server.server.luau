@@ -7,22 +7,45 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
-assert(RunService:IsStudio(), "StudioMultiplayer harness must only run in OVERDARE Studio")
-assert(RunService:IsServer(), "StudioMultiplayer Server must run in a server Script")
-
-local packageRoot = ReplicatedStorage:WaitForChild("ReactiveState", 15)
-assert(packageRoot ~= nil, "ReplicatedStorage.ReactiveState was not installed")
-
-local State = require(packageRoot)
-local Network = require(packageRoot.Network)
-local Overdare = require(packageRoot.Overdare)
-
 local HARNESS_VERSION = 1
 local SCHEMA_VERSION = 31
 local MIN_CLIENTS = 2
 local TIMEOUT_SECONDS = 20
 local RUN_ID = string.format("%.6f", os.clock())
 local PREFIX = "[RSMP][v1]"
+local startupComplete = false
+
+local function bootstrapLine(kind, fields)
+	local parts = { PREFIX, kind, "run=" .. RUN_ID }
+	for _, field in ipairs(fields or {}) do
+		local safe = string.gsub(tostring(field), "[%c|]", " ")
+		parts[#parts + 1] = safe
+	end
+	print(table.concat(parts, "|"))
+end
+
+-- This marker is deliberately before every assertion, require, RemoteEvent,
+-- and adapter. If it is absent, the Script was never started by Studio.
+bootstrapLine("BOOT", { "role=server", "stage=entry" })
+
+local function bootstrap()
+assert(RunService:IsStudio(), "StudioMultiplayer harness must only run in OVERDARE Studio")
+assert(RunService:IsServer(), "StudioMultiplayer Server must run in a server Script")
+bootstrapLine("BOOT", {
+	"role=server",
+	"stage=context",
+	"class=" .. tostring(script.ClassName),
+	"enabled=" .. tostring(script.Enabled),
+})
+
+local packageRoot = ReplicatedStorage:WaitForChild("ReactiveState", 15)
+assert(packageRoot ~= nil, "ReplicatedStorage.ReactiveState was not installed")
+bootstrapLine("BOOT", { "role=server", "stage=package-found" })
+
+local State = require(packageRoot)
+local Network = require(packageRoot.Network)
+local Overdare = require(packageRoot.Overdare)
+bootstrapLine("BOOT", { "role=server", "stage=modules-loaded" })
 
 -- ModuleScripts must be evaluated independently in each server/client process.
 -- A client seeing this server-only sentinel is a hard process-isolation failure.
@@ -61,6 +84,7 @@ end
 local stateRemote = freshRemote("RSMP_State")
 local frpRemote = freshRemote("RSMP_FRP")
 local controlRemote = freshRemote("RSMP_Control")
+bootstrapLine("BOOT", { "role=server", "stage=remotes-created" })
 
 local controlInbox = {}
 controlRemote.OnServerEvent:Connect(function(player, message)
@@ -240,6 +264,7 @@ local networkAdapter = Overdare.createServerReplication({
 		end
 	end,
 })
+bootstrapLine("BOOT", { "role=server", "stage=state-adapter-ready" })
 
 local frpProtocol = Network.defineFRPProtocol({
 	{
@@ -327,6 +352,7 @@ local serverRemoteBinding = attachServerRemote(serverDriver, frpRemote, {
 			and value.role ~= "forbidden" and clientId ~= nil
 	end,
 })
+bootstrapLine("BOOT", { "role=server", "stage=frp-binding-ready" })
 assert(type(serverRemoteBinding) == "table" and type(serverRemoteBinding.arrivals) == "function",
 	"attachFRPServerRemote must return a binding with :arrivals()")
 assert(type(serverRemoteBinding.dispose) == "function",
@@ -715,6 +741,8 @@ local function run()
 		"send rejected")
 end
 
+bootstrapLine("BOOT", { "role=server", "stage=setup-complete" })
+startupComplete = true
 line("START", {
 	"stateVersion=" .. tostring(State.VERSION),
 	"protocol=" .. tostring(Network.PROTOCOL_VERSION),
@@ -740,3 +768,19 @@ line("FINAL", {
 	"failed=" .. tostring(failed),
 	"clients=" .. tostring(MIN_CLIENTS),
 })
+end
+
+local bootstrapOk, bootstrapError = pcall(bootstrap)
+if not bootstrapOk then
+	if not startupComplete then
+		bootstrapLine("FINAL", {
+			"status=FAIL",
+			"passed=0",
+			"failed=1",
+			"clients=0",
+			"stage=startup",
+			"error=" .. tostring(bootstrapError),
+		})
+	end
+	error(bootstrapError, 0)
+end

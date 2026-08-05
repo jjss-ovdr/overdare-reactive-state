@@ -6,22 +6,51 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
+local BOOT_ID = string.format("client-%.6f", os.clock())
+local BOOT_PREFIX = "[RSMP][v1]"
+
+local function bootstrapLine(kind, fields)
+	local parts = { BOOT_PREFIX, kind, "run=" .. BOOT_ID }
+	for _, field in ipairs(fields or {}) do
+		local safe = string.gsub(tostring(field), "[%c|]", " ")
+		parts[#parts + 1] = safe
+	end
+	print(table.concat(parts, "|"))
+end
+
+-- This marker is deliberately before every assertion, wait, require, and
+-- binding. If it is absent, this LocalScript was not copied and started.
+bootstrapLine("BOOT", { "role=client", "stage=entry" })
+
+local function bootstrap()
 assert(RunService:IsStudio(), "StudioMultiplayer harness must only run in OVERDARE Studio")
 assert(RunService:IsClient(), "StudioMultiplayer Client must run in a LocalScript")
+bootstrapLine("BOOT", {
+	"role=client",
+	"stage=context",
+	"class=" .. tostring(script.ClassName),
+	"enabled=" .. tostring(script.Enabled),
+})
 
 local localPlayer = Players.LocalPlayer
 assert(localPlayer ~= nil, "Players.LocalPlayer is unavailable")
 
 local packageRoot = ReplicatedStorage:WaitForChild("ReactiveState", 15)
+assert(packageRoot ~= nil, "ReactiveState package did not replicate")
+bootstrapLine("BOOT", { "role=client", "stage=package-found" })
+
 local stateRemote = ReplicatedStorage:WaitForChild("RSMP_State", 15)
+assert(stateRemote ~= nil, "RSMP_State did not replicate; server harness did not start")
 local frpRemote = ReplicatedStorage:WaitForChild("RSMP_FRP", 15)
+assert(frpRemote ~= nil, "RSMP_FRP did not replicate; server harness did not finish RemoteEvent setup")
 local controlRemote = ReplicatedStorage:WaitForChild("RSMP_Control", 15)
-assert(packageRoot ~= nil and stateRemote ~= nil and frpRemote ~= nil and controlRemote ~= nil,
-	"StudioMultiplayer server objects did not replicate")
+assert(controlRemote ~= nil, "RSMP_Control did not replicate; server harness did not finish RemoteEvent setup")
+bootstrapLine("BOOT", { "role=client", "stage=objects-replicated" })
 
 local State = require(packageRoot)
 local Network = require(packageRoot.Network)
 local Overdare = require(packageRoot.Overdare)
+bootstrapLine("BOOT", { "role=client", "stage=modules-loaded" })
 
 local HARNESS_VERSION = 1
 local SCHEMA_VERSION = 31
@@ -108,6 +137,7 @@ local frpBinding = attachClientRemote(frpDriver, frpRemote, {
 	initialResync = false,
 	label = "studio-multiplayer.client-packets",
 })
+bootstrapLine("BOOT", { "role=client", "stage=frp-binding-ready" })
 assert(type(frpBinding) == "table" and type(frpBinding.arrivals) == "function",
 	"attachFRPClientRemote must return a binding with :arrivals()")
 assert(type(frpBinding.dispose) == "function", "FRP client remote binding must provide :dispose()")
@@ -470,9 +500,16 @@ controlRemote.OnClientEvent:Connect(function(message)
 	end
 end)
 
-while not (steppedOk and heartbeatOk and renderSteppedOk) do
-	RunService.Heartbeat:Wait()
+local signalWaited = 0
+while not (steppedOk and heartbeatOk and renderSteppedOk) and signalWaited < 5 do
+	signalWaited += task.wait(0.05)
 end
+assert(steppedOk and heartbeatOk and renderSteppedOk, table.concat({
+	"client RunService startup signals timed out",
+	"stepped=" .. tostring(steppedOk),
+	"heartbeat=" .. tostring(heartbeatOk),
+	"renderStepped=" .. tostring(renderSteppedOk),
+}, ","))
 
 localLine("READY", "client signals and FRP binding ready")
 controlRemote:FireServer({
@@ -481,3 +518,14 @@ controlRemote:FireServer({
 	isClient = RunService:IsClient(),
 	userId = tostring(localPlayer.UserId),
 })
+end
+
+local bootstrapOk, bootstrapError = pcall(bootstrap)
+if not bootstrapOk then
+	bootstrapLine("CLIENT_FAIL", {
+		"role=client",
+		"stage=startup",
+		"error=" .. tostring(bootstrapError),
+	})
+	error(bootstrapError, 0)
+end

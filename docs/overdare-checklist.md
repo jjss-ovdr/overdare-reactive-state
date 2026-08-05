@@ -39,7 +39,11 @@
 
 ## RemoteEvent와 multi-client
 
-- `examples/StudioMultiplayer`의 server Script와 client LocalScript를 설치하고 Number of Players를 2 이상으로 실행한다.
+- manifest의 `validationHarness.objects`와 동일한 class/path/source hash로
+  `examples/StudioMultiplayer`의 server Script와 client LocalScript를 설치하고,
+  두 객체 모두 `Enabled == true`인지 확인한 뒤 Number of Players를 2 이상으로 실행한다.
+- Play 직후 server 1개와 client별 1개의 `[RSMP][v1]|BOOT|...|stage=entry`를 확인한다.
+  BOOT가 하나도 없으면 RemoteEvent 실패가 아니라 `HARNESS_NOT_STARTED`로 분류한다.
 - Server Output의 `[RSMP][v1]|FINAL|...|status=PASS|...|clients=2` 한 줄을 필수 positive evidence로 보존한다.
 - RemoteEvent server/client callback signature를 adapter injection과 맞춘다.
 - 2명 이상의 client에 서로 다른 visibility projection snapshot을 보낸다.

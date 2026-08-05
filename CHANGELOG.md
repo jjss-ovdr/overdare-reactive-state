@@ -6,6 +6,11 @@
   OVERDARE while retaining the standalone Luau string path outside Studio.
 - Added package-build contracts for every Studio module dependency, including
   exact Instance require expressions and ModuleScript target validation.
+- Added early server/client RSMP BOOT and startup-failure records so disabled,
+  misplaced, or initialization-failed harness scripts cannot look like a silent
+  RemoteEvent timeout.
+- Added a generated validation-harness contract for Script/LocalScript class,
+  path, `Enabled` state, and normalized source hashes.
 
 ## 0.2.0-dev.2 - Unreleased
 
