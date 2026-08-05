@@ -3,29 +3,50 @@
 ## 한눈에 보는 구조
 
 ```mermaid
-flowchart LR
-    signals["OVERDARE Signals<br/>RunService"]
-    remote["RemoteEvent<br/>server ↔ clients"]
-    adapter["Overdare adapter<br/>batch + local timestamp"]
-    protocol["Authority protocol<br/>validate · seq/ack · replay/snapshot"]
-    boundary["FRP source boundary<br/>optional clone + freeze"]
-    host["Host.frame(t)<br/>atomic prepare → commit"]
-    event["Event&lt;T&gt;<br/>discrete push/pull"]
-    reactive["Reactive&lt;T&gt;<br/>initial + changes"]
-    behavior["Behavior&lt;T&gt;<br/>Reactive&lt;TimeFunction&gt;"]
-    sink["Game sinks<br/>state · rendering · effects"]
+flowchart TB
+    subgraph denotation["정통 FRP 정규형"]
+        direction LR
+        future["Future&lt;A&gt;<br/>한 bound time의 값"]
+        event["Event&lt;A&gt;<br/>≅ Future&lt;Reactive&lt;A&gt;&gt;<br/>시간순 occurrence"]
+        reactive["Reactive&lt;A&gt;<br/>초깃값 A + changes Event&lt;A&gt;"]
+        timeFunction["TimeFunction&lt;A&gt;<br/>Constant(A) | Dynamic(Time → A)"]
+        behavior["Behavior&lt;A&gt;<br/>Reactive&lt;TimeFunction&lt;A&gt;&gt;"]
 
-    signals --> adapter
-    remote <--> protocol
-    protocol --> adapter
-    adapter --> boundary --> host --> event
-    event --> reactive --> behavior --> sink
-    event --> sink
-    host -. "sample exact time" .-> behavior
-    event -. "authoritative output" .-> protocol
+        future -. "정규형 구성 요소" .-> event
+        event -- "changes" --> reactive
+        timeFunction -- "phase value" --> behavior
+    end
+
+    subgraph execution["한 logical time의 Push-Pull 실행"]
+        direction LR
+        engine["Signals / validated packets"]
+        adapter["OVERDARE adapter<br/>batch + local timestamp"]
+        frame["Host.frame(t)<br/>동시간 입력 barrier"]
+        source["Source Event roots<br/>optional capture"]
+        push["PUSH<br/>dependent Event를 dirty 표시"]
+        graph["Event combinator graph<br/>map · filter · merge · bind · scan"]
+        demand["Demand<br/>subscription · Reactive · renderer"]
+        staged["Prepared result<br/>Event occurrence + Reactive state"]
+        behaviorPull["PULL at exact t<br/>활성 Dynamic TimeFunction만 sample"]
+        commit["Atomic commit<br/>frozen occurrence + history"]
+        sinks["Sinks<br/>game state · rendering · effects"]
+
+        engine --> adapter --> frame --> source --> push --> graph
+        demand -- "PULL: 필요한 prefix만<br/>frame당 한 번 평가" --> graph
+        graph --> staged
+        staged --> commit
+        staged -- "활성 phase" --> behaviorPull
+        frame -. "sample time t" .-> behaviorPull
+        demand -. "연속 값 요구" .-> behaviorPull
+        behaviorPull --> commit --> sinks
+    end
+
+    event -. "denotation 구현" .-> graph
+    reactive -. "current / history" .-> staged
+    behavior -. "phase sampling" .-> behaviorPull
 ```
 
-엔진 입력과 검증된 네트워크 입력은 adapter에서 같은 logical time 단위로 모여 `Host.frame(t)` 하나로 들어간다. Host는 Event/Reactive 변경을 원자적으로 commit하고, Behavior만 필요한 정확한 시각에 연속 값을 pull한다. 네트워크 계층은 Core 밖에서 client intent와 server authority를 관리하므로 FRP 의미론과 transport 정책이 섞이지 않는다.
+핵심은 source가 값을 밀어 넣을 때 사용자 mapper를 즉시 실행하지 않는다는 점이다. push는 Event graph에 변경 가능성만 전파하고, subscription이나 Reactive가 요구한 경로만 pull해서 frame당 한 번 평가한다. `Behavior<A>`는 `Reactive<TimeFunction<A>>`이므로 phase 변경은 Event/Reactive 경로를 따르고, 활성 phase가 `Dynamic`일 때만 정확한 시각 `t`로 연속 값을 pull한다. 모든 준비가 성공해야 occurrence와 history가 함께 commit된다.
 
 ## Denotation이 먼저다
 
