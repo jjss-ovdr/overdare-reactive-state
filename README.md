@@ -112,9 +112,26 @@ driver:dispose() -- Host는 소유하지 않으므로 살아 있다.
 
 ## 설치와 검증
 
+### 고정 Luau 도구체인
+
+strict public type gate는 [`tools/luau-toolchain.json`](./tools/luau-toolchain.json)의 공식 Luau source commit `decb2d0526797a175d7c5ba8d4d78858ced98553`을 기준으로 한다. `luau-lsp analyze`는 편집기용 frontend이며 이 gate의 `luau-analyze` 대체물이 아니다. 오래된 analyzer가 `read` property 또는 recursive generic을 지원하지 않으면 `tools/check-frp-types.mjs`가 capability probe에서 즉시 중단한다.
+
+공식 Luau를 같은 commit으로 빌드할 때는 다음 target을 사용한다.
+
+```sh
+git clone https://github.com/luau-lang/luau.git .tooling/luau
+git -C .tooling/luau checkout decb2d0526797a175d7c5ba8d4d78858ced98553
+cmake -S .tooling/luau -B .tooling/luau/cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build .tooling/luau/cmake --target Luau.Repl.CLI --config RelWithDebInfo
+cmake --build .tooling/luau/cmake --target Luau.Analyze.CLI --config RelWithDebInfo
+```
+
+생성된 `luau`와 `luau-analyze`를 PATH에 두거나 `LUAU_ANALYZE=/absolute/path/to/luau-analyze`를 지정한다. `.tooling/`은 git에서 제외되며 임시 검증용으로만 사용한다.
+
 ```sh
 node tools/build-studio-package.mjs
 node tools/build-studio-package.mjs --verify
+node tools/build-studio-package.mjs --check-normalization
 luau tools/studio-package-smoke.luau
 
 luau tests/run.luau

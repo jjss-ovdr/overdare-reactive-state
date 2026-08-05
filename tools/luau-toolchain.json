@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/luau-lang/luau",
+  "commit": "decb2d0526797a175d7c5ba8d4d78858ced98553",
+  "executables": ["luau", "luau-analyze"],
+  "requiredAnalyzerFeatures": [
+    "table property access modifier: read",
+    "relaxed recursive generic types"
+  ]
+}

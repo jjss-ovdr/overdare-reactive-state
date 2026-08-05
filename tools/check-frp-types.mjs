@@ -1,10 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { copyFile, rm } from "node:fs/promises";
+import { copyFile, readFile, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const analyzer = process.env.LUAU_ANALYZE || "luau-analyze";
+const toolchain = JSON.parse(
+	await readFile(resolve(projectRoot, "tools/luau-toolchain.json"), "utf8")
+);
+const capabilityFile = "tests/typecheck/analyzer_capabilities.luau";
 const positiveFiles = [
 	"src/Types.luau",
 	"src/init.luau",
@@ -33,6 +37,16 @@ function run(files) {
 	};
 }
 
+const capability = run([capabilityFile]);
+if (capability.status !== 0) {
+	process.stderr.write(capability.output);
+	throw new Error([
+		"incompatible Luau analyzer: required read-only property and recursive generic syntax is unavailable",
+		`use official luau-analyze from ${toolchain.repository} at commit ${toolchain.commit}`,
+		"luau-lsp analyze is an editor frontend and is not a compatible substitute for this gate",
+	].join("; "));
+}
+
 const positive = run(positiveFiles);
 if (positive.status !== 0) {
 	process.stderr.write(positive.output);
@@ -58,4 +72,6 @@ try {
 	await rm(negativeCheck, { force: true });
 }
 
-console.log("PASS strict public FRP types (positive=0 errors, negative=7 expected errors)");
+console.log(
+	`PASS strict public FRP types (positive=0 errors, negative=7 expected errors, baseline=${toolchain.commit.slice(0, 12)})`
+);

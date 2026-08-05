@@ -13,6 +13,10 @@
   freeze of plain-data graphs while preserving shared aliases.
 - Added positive/negative strict-consumer fixtures, adversarial immutability and
   rollback tests, package smoke coverage, and a dedicated capture benchmark.
+- Pinned the official Luau source commit required by the strict type gate and
+  added a capability preflight that rejects incompatible analyzer substitutes.
+- Made Studio package source and text artifacts LF-normalized so Windows CRLF
+  and Unix LF checkouts produce the same package SHA-256.
 
 ## 0.2.0-dev.1 - Unreleased
 

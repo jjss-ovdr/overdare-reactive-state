@@ -1,0 +1,10 @@
+*.luau text eol=lf
+*.lua text eol=lf
+*.mjs text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+.gitignore text eol=lf
+.luaurc text eol=lf
+LICENSE text eol=lf
+NOTICE.md text eol=lf

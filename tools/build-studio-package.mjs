@@ -64,7 +64,12 @@ function invariant(condition, message) {
 	}
 }
 
+function normalizeText(source) {
+	return source.replace(/\r\n?/g, "\n");
+}
+
 function studioSource(file, source) {
+	source = normalizeText(source);
 	if (file !== "init.luau") {
 		return source;
 	}
@@ -74,6 +79,11 @@ function studioSource(file, source) {
 		"Root type-require transform must match exactly once"
 	);
 	return parts.join(STUDIO_TYPE_REQUIRE);
+}
+
+async function writeNormalizedText(sourcePath, destinationPath) {
+	const source = await readFile(sourcePath, "utf8");
+	await writeFile(destinationPath, normalizeText(source));
 }
 
 function parseInteger(source, pattern, label) {
@@ -388,24 +398,56 @@ async function artifactRecord(path) {
 	};
 }
 
+function textFileRecord(path, contents) {
+	const bytes = Buffer.from(contents, "utf8");
+	return {
+		path,
+		size: bytes.byteLength,
+		sha256: sha256(bytes),
+	};
+}
+
+async function checkNormalization() {
+	const files = await assertSourceLayout();
+	const lfRecords = [];
+	const crlfRecords = [];
+
+	for (const file of files) {
+		const source = normalizeText(await readFile(join(sourceRoot, file), "utf8"));
+		const crlfSource = source.replace(/\n/g, "\r\n");
+		const fromLf = studioSource(file, source);
+		const fromCrlf = studioSource(file, crlfSource);
+		invariant(fromLf === fromCrlf, `LF/CRLF package output differs: ${file}`);
+		invariant(!fromLf.includes("\r"), `Packaged source is not LF-normalized: ${file}`);
+		lfRecords.push(textFileRecord(file, fromLf));
+		crlfRecords.push(textFileRecord(file, fromCrlf));
+	}
+
+	const lfHash = packageHash(lfRecords);
+	const crlfHash = packageHash(crlfRecords);
+	invariant(lfHash === crlfHash, "LF/CRLF package SHA-256 differs");
+	console.log(`PASS deterministic Studio package normalization (${files.length} files, sha256=${lfHash})`);
+}
+
 async function build() {
 	const files = await assertSourceLayout();
 	const metadata = await readMetadata();
 	const studioObjects = buildStudioObjects(files);
 	await prepareDist();
 	await cp(sourceRoot, packageRoot, { recursive: true, force: false, errorOnExist: true });
-	const packageRootPath = join(packageRoot, "init.luau");
-	const rootSource = await readFile(packageRootPath, "utf8");
-	await writeFile(packageRootPath, studioSource("init.luau", rootSource));
+	await Promise.all(files.map(async (file) => {
+		const source = await readFile(join(sourceRoot, file), "utf8");
+		await writeFile(join(packageRoot, file), studioSource(file, source));
+	}));
 
 	const fileRecords = await makeFileRecords(packageRoot, files);
 	const digest = packageHash(fileRecords);
 	const installer = await buildInstaller(studioObjects, metadata, digest);
 
 	await Promise.all([
-		cp(join(projectRoot, "docs", "studio-install.md"), join(distRoot, "INSTALL.md")),
-		cp(join(projectRoot, "LICENSE"), join(distRoot, "LICENSE")),
-		cp(join(projectRoot, "NOTICE.md"), join(distRoot, "NOTICE.md")),
+		writeNormalizedText(join(projectRoot, "docs", "studio-install.md"), join(distRoot, "INSTALL.md")),
+		writeNormalizedText(join(projectRoot, "LICENSE"), join(distRoot, "LICENSE")),
+		writeNormalizedText(join(projectRoot, "NOTICE.md"), join(distRoot, "NOTICE.md")),
 		writeFile(join(distRoot, "StudioInstaller.luau"), installer),
 		writeFile(
 			join(distRoot, `${PACKAGE_NAME}.project.json`),
@@ -495,6 +537,7 @@ async function verify() {
 			readFile(join(sourceRoot, file), "utf8"),
 			readFile(join(packageRoot, file), "utf8"),
 		]);
+		invariant(!packageContents.includes("\r"), `Packaged file is not LF-normalized: ${file}`);
 		invariant(studioSource(file, sourceContents) === packageContents, `Packaged file is stale: ${file}`);
 	}
 
@@ -516,7 +559,7 @@ async function verify() {
 }
 
 function printHelp() {
-	console.log("Usage: node tools/build-studio-package.mjs [--verify]");
+	console.log("Usage: node tools/build-studio-package.mjs [--verify|--check-normalization]");
 }
 
 try {
@@ -524,6 +567,8 @@ try {
 		await build();
 	} else if (process.argv.length === 3 && process.argv[2] === "--verify") {
 		await verify();
+	} else if (process.argv.length === 3 && process.argv[2] === "--check-normalization") {
+		await checkNormalization();
 	} else if (process.argv.length === 3 && ["--help", "-h"].includes(process.argv[2])) {
 		printHelp();
 	} else {

@@ -9,8 +9,11 @@
 ```sh
 node tools/build-studio-package.mjs
 node tools/build-studio-package.mjs --verify
+node tools/build-studio-package.mjs --check-normalization
 luau tools/studio-package-smoke.luau
 ```
+
+빌더는 checkout의 CRLF/LF와 무관하게 모든 package source와 text artifact를 LF로 정규화한다. `--check-normalization`은 두 입력 형식이 동일한 package SHA-256을 만드는지 15개 source 전체로 검증한다.
 
 생성물은 다음과 같다.
 

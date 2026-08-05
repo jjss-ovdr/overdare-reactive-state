@@ -2,6 +2,8 @@
 
 이 저장소의 CLI test는 engine API를 fake로 검증한다. 다음 항목을 실제 Studio build에서 통과하기 전에는 production/1.0으로 표시하지 않는다.
 
+독립 QA에서는 원본 World를 복사하거나 checkpoint를 만든 뒤 disposable test World에 생성 package와 harness Script를 임시 설치해도 된다. 이는 저장소 코드 수정과 구분한다. 테스트 뒤 World를 저장·게시하지 않거나 설치 객체를 제거한다. Studio가 열려 있지만 blank World에 harness가 없는 경우 상태는 `BLOCKED: test harness not installed / temporary World mutation not authorized`이며, `Studio environment unavailable`로 기록하지 않는다.
+
 ## 설치와 require
 
 - `src` tree를 ReactiveState ModuleScript package로 import한다.

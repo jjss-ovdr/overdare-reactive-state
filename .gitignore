@@ -1,4 +1,5 @@
 dist/
+.tooling/
 coverage/
 *.log
 .DS_Store

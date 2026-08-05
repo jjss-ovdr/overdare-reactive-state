@@ -4,6 +4,15 @@ This harness is the platform boundary gate for the real OVERDARE `RemoteEvent`
 and `RunService` implementation. It is not part of the runtime package and must
 never be enabled in a published World.
 
+For an independent QA run, installing the generated package and these two
+harness scripts into a disposable clean test World is required test setup, not
+a source-repository modification. A test agent may create these temporary
+Studio objects after making a World copy/checkpoint, but must not save over or
+publish the original World, edit tracked repository files, commit, or push.
+Discard the test World or remove every installed object after collecting the
+outputs. An open blank Baseplate without the package/harness is
+`BLOCKED: test harness not installed`, not `Studio environment unavailable`.
+
 ## Required API contract
 
 The scripts exercise the existing `Network` server/client replicators and these
