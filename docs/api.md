@@ -2,6 +2,30 @@
 
 모든 코어 값은 하나의 `Host`에 속한다. 서로 다른 Host의 Event/Reactive/Behavior를 결합하면 오류다. 조합자 callback은 순수하고 동기식이어야 하며 yield하면 frame이 중단된다.
 
+## 타입과 불변 payload
+
+공개 `Future<T>`, `Event<T>`, `Reactive<T>`, `Behavior<T>`, `TimeFunction<T>`, `Host`, `Emit<T>`는 `--!strict` 소비자에서 payload 타입을 끝까지 보존한다. occurrence는 읽기 전용 타입이며 런타임에서도 `table.freeze`된 record다. 따라서 한 sink가 `time`, `value`, `order`를 바꿔 다른 sink나 history를 오염시킬 수 없다.
+
+generic payload `T`는 함수, Instance, FRP handle도 될 수 있으므로 Core가 기본으로 deep-copy하지 않는다. 기본 계약은 애플리케이션과 조합자 callback이 보존 중인 payload를 수정하지 않는 것이다. plain serializable table을 외부 mutable alias와 분리하려면 capture를 명시한다.
+
+```lua
+local capture = FRP.Immutable.serializable()
+local input, emit = host:source({ capture = capture })
+
+local state = input:scan({ total = 0 }, function(previous, amount)
+    return { total = previous.total + amount }
+end, { capture = capture })
+```
+
+- `host:source({ capture = fn })`: emit 또는 예약 시점에 payload를 capture한다.
+- `FRP.Event.pure` / `FRP.Event.once` / `host:eventFromFuture(..., { capture = fn })`: `-∞` 또는 예약 occurrence도 생성 경계에서 capture한다.
+- `FRP.fromOccurrences(host, entries, { capture = fn })`: constructor 시점에 각 payload를 capture한다.
+- `event:scan(initial, reducer, { capture = fn })`: initial과 성공한 reducer 결과를 capture한다. reducer에는 committed state를 직접 주지 않고 분리된 working value를 준다.
+- `FRP.accumReactive` / `FRP.accumBehavior`에 같은 option을 주면 초기 Reactive 값과 내부 scan state를 서로 독립적으로 capture한다.
+- `FRP.Immutable.serializable(codec?)`: codec으로 clone한 뒤 전체 plain table graph를 재귀적으로 freeze한다. custom codec 결과도 metatable이 없어야 한다. 기본 codec은 cycle, 함수, Instance 같은 실행 가능·외부 자원을 거부하고 shared alias는 보존한다.
+
+capture callback과 reducer는 yield할 수 없다. capture/reducer가 오류를 내거나 yield하면 해당 frame은 commit되지 않는다. `Immutable.serializable()`을 scan에 쓰면 reducer는 frozen working value를 받으므로 in-place 수정 대신 새 table을 반환해야 한다. mutable working copy가 꼭 필요한 내부 알고리즘은 검증된 clone capture를 별도로 제공하되, 외부로 내보내기 전 불변성을 애플리케이션이 책임진다.
+
 ## Host
 
 ```lua

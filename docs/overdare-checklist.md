@@ -9,6 +9,9 @@
 - Server와 client Host/Event graph가 서로 다른 메모리인지 확인한다.
 - Core만 require했을 때 RunService connection과 RemoteEvent listener가 0개인지 확인한다.
 - Asset Drawer로 복사한 clean World에서도 child ModuleScript 경로가 같은지 확인한다.
+- Studio VM에서 `table.freeze`/`table.isfrozen`이 동작하고 반환된 occurrence의 `time`, `value`, `order` 수정이 오류인지 확인한다.
+- `FRP.Immutable.serializable()` source에 plain table을 emit한 뒤 원본을 바꿔도 captured payload가 분리·재귀 freeze돼 있는지 확인한다.
+- `--!strict` 소비자 ModuleScript에서 root의 `script.Types` witness가 해석되고 `Event<number>`를 `Event<string>`에 대입하거나 occurrence metadata를 쓰면 Studio 진단이 뜨는지 확인한다.
 
 ## RunService
 
@@ -50,7 +53,7 @@
 
 ## Timeline과 성능
 
-- `future/event/reactive/behavior` 전용 7개 FRP workload를 Studio VM에서 실행한다.
+- `future/event/reactive/behavior`와 immutable capture 전용 8개 FRP workload를 Studio VM에서 실행한다.
 
 - 같은 seed/input으로 두 번 실행한 매 tick `getStateHash()`를 비교한다.
 - Rollback window 끝과 confirmed tick 경계를 확인한다.

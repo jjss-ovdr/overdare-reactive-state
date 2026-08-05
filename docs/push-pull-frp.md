@@ -129,7 +129,18 @@ Behavior는 Functor와 Applicative를 제공한다. 논문의 reactive normal fo
 
 소비형 Host는 시간 증가 순서만 허용해 지나간 prefix 검색과 active phase를 캐시한다. 테스트·진단용 `Event:occurrences()`는 닫힌 prefix를 read-only로 pull해 denotation과 비교할 수 있다. 과거 cutoff를 조회해도 live `scan/bind` state는 되감기지 않는다.
 
-## 6. Haskell 실행 장치와의 차이
+## 6. Haskell 값 의미와 Luau 불변성 계약
+
+논문의 Haskell 값은 순수 함수에서 관찰 중인 값을 제자리 변경하지 않는다는 전제 위에 있다. Luau table은 mutable reference이므로 같은 식을 유지하려면 두 층의 계약이 필요하다.
+
+- occurrence envelope은 실제 frozen table이며 public type도 read-only다.
+- payload `T`는 기본적으로 zero-copy지만, 보존 중인 값을 application/callback이 수정하지 않는다고 계약한다.
+- plain serializable payload는 `source`, `pure`/`once`/Future conversion, `fromOccurrences`, `scan`/accumulation의 `capture`와 `FRP.Immutable.serializable()`로 clone/freeze할 수 있다.
+- capture와 reducer는 동기식이어야 하며, 실패한 frame은 retained prefix와 state를 바꾸지 않는다.
+
+모든 `T`를 무조건 deep-freeze하지 않는 이유는 Event가 함수, Instance, TimeFunction, 다른 FRP graph 값을 합법적으로 운반하기 때문이다. 이는 순수성을 포기한 것이 아니라, Haskell이 타입·런타임으로 제공하던 값 안정성을 Luau에서는 public readonly record, runtime freeze, 명시적 data capture와 사용자 callback 계약으로 나눈 것이다.
+
+## 7. Haskell 실행 장치와의 차이
 
 논문 구현의 future time은 `AddBounds`, `Max`, `Improving`을 조합하고 `unamb`로 두 호환 계산을 동시에 시도한다. 이것은 Haskell의 다음 특성에 기대어 있다.
 
@@ -155,7 +166,7 @@ strict Luau에서는 함수 인자가 먼저 평가되고 coroutine이 CPU 계�
 
 generic unresolved Future race는 현재 공개하지 않는다. 외부 비동기 시스템이 lower-bound/watermark protocol을 제공한다면 별도 adapter에서 exact time이 알려진 뒤 Host에 넣는다.
 
-## 7. OVERDARE와 logical frame
+## 8. OVERDARE와 logical frame
 
 여러 Signal callback이 같은 engine frame에 속한다면 각각 즉시 Host commit을 만들면 안 된다. 나중에 도착한 left source를 이미 전달한 right source보다 앞에 삽입할 수 없기 때문이다.
 
@@ -170,7 +181,7 @@ RunService phase -> one Host:frame(time)
 
 이 barrier 덕분에 callback 도착이 `right, left`여도 `left:merge(right)`의 결과는 `left, right`다.
 
-## 8. 자동 semantic gate
+## 9. 자동 semantic gate
 
 현재 테스트에는 다음 항목이 포함된다.
 
@@ -192,7 +203,7 @@ RunService phase -> one Host:frame(time)
 
 전용 benchmark는 `future/max_sync`, `event/stable_merge_ties`, `event/push_pull_pipeline`, `reactive/applicative_simultaneous`, `behavior/continuous_pull`, `behavior/switcher_churn`, `event/dormant_quiescence`를 O1/O2/codegen에서 실행한다.
 
-## 9. 아직 의도적으로 없는 기능
+## 10. 아직 의도적으로 없는 기능
 
 - generic public `unamb`와 unresolved improving Future
 - Behavior Monad
@@ -201,7 +212,7 @@ RunService phase -> one Host:frame(time)
 - Event/Reactive graph 자체의 자동 복제와 built-in AOI projection (명시적 FRP protocol/authority adapter는 `docs/networking.md`에 제공)
 - Studio target-device 절대 성능 합격선
 
-## 10. 수명과 무한 prefix
+## 11. 수명과 무한 prefix
 
 정통 Event Monad에서 미래의 mapper가 임의의 과거 inner occurrence를 선택할 수 있으므로 Host가 살아 있는 동안 source prefix와 Reactive history는 의미론적 데이터다. 일반적인 bounded retention을 기본값으로 두면 `bind` 법칙이 깨진다.
 

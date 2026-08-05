@@ -1,6 +1,6 @@
 # OVERDARE Studio 설치
 
-이 문서는 빌드된 `ReactiveState` source package를 World의 `ReplicatedStorage/ReactiveState`에 설치하는 절차다. 현재 배포물은 `0.2.0-dev.1` preview이며 Asset Store 공개 배포용 최종본이 아니다.
+이 문서는 빌드된 `ReactiveState` source package를 World의 `ReplicatedStorage/ReactiveState`에 설치하는 절차다. 현재 배포물은 `0.2.0-dev.2` preview이며 Asset Store 공개 배포용 최종본이 아니다.
 
 ## 1. 패키지 생성·검증
 
@@ -18,6 +18,8 @@ luau tools/studio-package-smoke.luau
 - `dist/StudioInstaller.luau`: edit-time 자동 설치기
 - `dist/ReactiveState.manifest.json`: 파일 해시와 Studio object mapping
 - `dist/ReactiveState.project.json`: source-tree sync 도구용 최소 project mapping
+
+빌더는 standalone CLI 분석용 root type witness 경로 `./src/Types`를 Studio package에서 `script.Types`로 정확히 한 번 바꾼다. 런타임 로직은 바꾸지 않으며, manifest hash와 installer에는 변환된 Studio source가 들어간다. `--verify`는 이 target-specific 변환까지 대조한다.
 
 ## 2. Studio에 설치
 
@@ -43,6 +45,7 @@ ReplicatedStorage
     │   ├── Codec (ModuleScript)
     │   ├── FRP (ModuleScript)
     │   ├── Hash (ModuleScript)
+    │   ├── Immutable (ModuleScript)
     │   └── Runtime (ModuleScript)
     ├── Debug (ModuleScript; Debug/init.luau)
     ├── Network (ModuleScript; Network/init.luau)
@@ -59,14 +62,29 @@ ReplicatedStorage
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local FRP = require(ReplicatedStorage:WaitForChild("ReactiveState"))
 
-assert(FRP.VERSION == "0.2.0-dev.1")
+assert(FRP.VERSION == "0.2.0-dev.2")
 assert(FRP.API_VERSION == 2)
 assert(FRP.SEMANTICS_VERSION == 1)
 
 local host = FRP.newHost()
-local changes, emit = host:source()
+local changes, emit = host:source({ capture = FRP.Immutable.serializable() })
 local value = FRP.stepper(1, changes)
 
+local input = { score = 5 }
+
+host:frame(1, function()
+    emit(input)
+end)
+input.score = 99
+local occurrence = changes:occurrences()[1]
+assert(table.isfrozen(occurrence))
+assert(table.isfrozen(occurrence.value))
+assert(occurrence.value.score == 5)
+host:dispose()
+
+host = FRP.newHost()
+changes, emit = host:source()
+value = FRP.stepper(1, changes)
 host:frame(1, function()
     emit(5)
 end)

@@ -255,6 +255,57 @@ local function caseDormant(FRP, config)
 	}
 end
 
+local function caseImmutableCapture(FRP, config)
+	return {
+		id = "event/immutable_capture",
+		operations = config.frames,
+		setup = function()
+			local host = FRP.newHost()
+			local source, fire = host:source({
+				capture = FRP.Immutable.serializable(),
+			})
+			local shared = { frame = 0 }
+			local payload = { left = shared, right = shared }
+			local checksum = 0
+			local last = nil
+			source:subscribe(function(value)
+				checksum += value.left.frame
+				last = value
+			end)
+			return {
+				host = host,
+				fire = fire,
+				shared = shared,
+				payload = payload,
+				checksum = function() return checksum end,
+				last = function() return last end,
+			}
+		end,
+		run = function(fixture)
+			for frame = 1, config.frames do
+				fixture.shared.frame = frame
+				fixture.host:frame(frame, function()
+					fixture.fire(fixture.payload)
+				end)
+			end
+			fixture.shared.frame = -1
+		end,
+		verify = function(fixture)
+			expectEqual(
+				fixture.checksum(),
+				config.frames * (config.frames + 1) / 2,
+				"immutable capture checksum"
+			)
+			local last = fixture.last()
+			expectEqual(last.left.frame, config.frames, "immutable capture detached value")
+			expectEqual(last.left, last.right, "immutable capture shared alias")
+			expectEqual(table.isfrozen(last), true, "immutable capture frozen root")
+			expectEqual(table.isfrozen(last.left), true, "immutable capture frozen child")
+		end,
+		cleanup = function(fixture) fixture.host:dispose() end,
+	}
+end
+
 function Suite.run(FRP, options)
 	options = options or {}
 	local profileName = options.profile or "standard"
@@ -272,6 +323,7 @@ function Suite.run(FRP, options)
 		caseBehaviorPull(FRP, config),
 		caseBehaviorSwitch(FRP, config),
 		caseDormant(FRP, config),
+		caseImmutableCapture(FRP, config),
 	}
 
 	print(string.format("Push-Pull FRP benchmark | version=%s | profile=%s | mode=%s",

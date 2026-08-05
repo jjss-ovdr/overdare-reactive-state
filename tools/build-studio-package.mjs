@@ -16,6 +16,8 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_NAME = "tools/build-studio-package.mjs";
 const FORMAT_VERSION = 1;
 const PACKAGE_NAME = "ReactiveState";
+const CLI_TYPE_REQUIRE = 'return require("./src/Types")';
+const STUDIO_TYPE_REQUIRE = "return require(script.Types)";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = resolve(dirname(scriptPath), "..");
@@ -33,6 +35,7 @@ const expectedSourceFiles = [
 	"Core/Codec.luau",
 	"Core/FRP.luau",
 	"Core/Hash.luau",
+	"Core/Immutable.luau",
 	"Core/Runtime.luau",
 	"Debug/init.luau",
 	"Network/init.luau",
@@ -61,6 +64,18 @@ function invariant(condition, message) {
 	}
 }
 
+function studioSource(file, source) {
+	if (file !== "init.luau") {
+		return source;
+	}
+	const parts = source.split(CLI_TYPE_REQUIRE);
+	invariant(
+		parts.length === 2,
+		"Root type-require transform must match exactly once"
+	);
+	return parts.join(STUDIO_TYPE_REQUIRE);
+}
+
 function parseInteger(source, pattern, label) {
 	const match = source.match(pattern);
 	invariant(match !== null, `Could not read ${label}`);
@@ -82,11 +97,12 @@ async function readMetadata() {
 	]);
 
 	const studioRequireContracts = [
-		[rootSource, "require(script.Core.FRP)", "root -> Core.FRP"],
-		[rootSource, "require(script.Core.Runtime)", "root -> Core.Runtime"],
-		[rootSource, "require(script.Core.Clock)", "root -> Core.Clock"],
-		[rootSource, "require(script.Core.Codec)", "root -> Core.Codec"],
-		[rootSource, "require(script.Core.Hash)", "root -> Core.Hash"],
+		[rootSource, "dynamicRequire(script.Core.FRP)", "root -> Core.FRP"],
+		[rootSource, "dynamicRequire(script.Core.Runtime)", "root -> Core.Runtime"],
+		[rootSource, "dynamicRequire(script.Core.Clock)", "root -> Core.Clock"],
+		[rootSource, "dynamicRequire(script.Core.Codec)", "root -> Core.Codec"],
+		[rootSource, "dynamicRequire(script.Core.Hash)", "root -> Core.Hash"],
+		[rootSource, "dynamicRequire(script.Core.Immutable)", "root -> Core.Immutable"],
 		[networkSource, "require(script.Parent.Core.Codec)", "Network -> Core.Codec"],
 		[networkSource, "require(script.Parent.Core.Hash)", "Network -> Core.Hash"],
 		[networkSource, "require(script.EventProtocol)", "Network -> Network.EventProtocol"],
@@ -275,7 +291,7 @@ async function buildInstaller(objects, metadata, digest) {
 	const sourceByPath = new Map();
 	for (const object of objects) {
 		if (object.sourcePath !== undefined) {
-			sourceByPath.set(object.sourcePath, await readFile(join(sourceRoot, object.sourcePath), "utf8"));
+			sourceByPath.set(object.sourcePath, await readFile(join(packageRoot, object.sourcePath), "utf8"));
 		}
 	}
 
@@ -378,6 +394,9 @@ async function build() {
 	const studioObjects = buildStudioObjects(files);
 	await prepareDist();
 	await cp(sourceRoot, packageRoot, { recursive: true, force: false, errorOnExist: true });
+	const packageRootPath = join(packageRoot, "init.luau");
+	const rootSource = await readFile(packageRootPath, "utf8");
+	await writeFile(packageRootPath, studioSource("init.luau", rootSource));
 
 	const fileRecords = await makeFileRecords(packageRoot, files);
 	const digest = packageHash(fileRecords);
@@ -473,10 +492,10 @@ async function verify() {
 
 	for (const file of files) {
 		const [sourceContents, packageContents] = await Promise.all([
-			readFile(join(sourceRoot, file)),
-			readFile(join(packageRoot, file)),
+			readFile(join(sourceRoot, file), "utf8"),
+			readFile(join(packageRoot, file), "utf8"),
 		]);
-		invariant(sourceContents.equals(packageContents), `Packaged file is stale: ${file}`);
+		invariant(studioSource(file, sourceContents) === packageContents, `Packaged file is stale: ${file}`);
 	}
 
 	for (const artifact of manifest.artifacts) {

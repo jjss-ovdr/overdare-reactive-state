@@ -8,7 +8,7 @@ luau -O2 benchmarks/frp-run.luau -a standard O2
 luau -O2 --codegen benchmarks/frp-run.luau -a standard O2-codegen
 ```
 
-`FRPSuite.luau`는 Future/Event/Reactive/Behavior에 전용인 7개 workload와 각 correctness assertion을 실행한다. `smoke`, `standard` profile을 지원한다. 현재 결과는 [`results/2026-08-04-push-pull-frp.md`](./results/2026-08-04-push-pull-frp.md)에 있다.
+`FRPSuite.luau`는 Future/Event/Reactive/Behavior와 immutable payload capture에 전용인 8개 workload 및 correctness assertion을 실행한다. `smoke`, `standard` profile을 지원한다. 최신 결과는 [`results/2026-08-05-strict-immutable-frp.md`](./results/2026-08-05-strict-immutable-frp.md)에 있고, 변경 전 7개 경로 baseline은 [`results/2026-08-04-push-pull-frp.md`](./results/2026-08-04-push-pull-frp.md)에 보존한다.
 
 ## Multiplayer-first FRP protocol
 
@@ -18,7 +18,7 @@ luau -O2 benchmarks/multiplayer-run.luau -a standard O2
 luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
 ```
 
-`MultiplayerSuite.luau`는 2/8/32 peer에서 validated client intent와 per-client authoritative stream을 각각 측정한다. 여기에 64-packet replay 복구와 비신뢰 wire packet 거부를 더한 8개 workload가 있으며 모든 표본은 sequence/checksum/replay/security invariant를 검증한다. 현재 결과는 [`results/2026-08-04-multiplayer-frp.md`](./results/2026-08-04-multiplayer-frp.md)에 있다. 이 수치는 엔진 독립 프로토콜 baseline이다. 실제 RemoteEvent transport와 기기 성능은 아래 Studio gate에서 별도로 측정한다.
+`MultiplayerSuite.luau`는 2/8/32 peer에서 validated client intent와 per-client authoritative stream을 각각 측정한다. 여기에 64-packet replay 복구와 비신뢰 wire packet 거부를 더한 8개 workload가 있으며 모든 표본은 sequence/checksum/replay/security invariant를 검증한다. 최신 결과는 [`results/2026-08-05-strict-immutable-multiplayer.md`](./results/2026-08-05-strict-immutable-multiplayer.md)에 있다. 이 수치는 엔진 독립 프로토콜 baseline이다. 실제 RemoteEvent transport와 기기 성능은 아래 Studio gate에서 별도로 측정한다.
 
 ## 기존 StateRuntime 호환 baseline
 

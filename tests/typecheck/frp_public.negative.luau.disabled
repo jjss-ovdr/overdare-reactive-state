@@ -1,0 +1,42 @@
+--!strict
+
+-- Expected to fail when checked explicitly with luau-analyze. The non-.luau
+-- suffix keeps intentional errors out of the repository-wide positive pass.
+local FRP = require("../../src")
+
+local occurrence: FRP.Occurrence<number> = {
+	time = 0,
+	value = 1,
+	order = 0,
+}
+occurrence.time = 1 -- read-only
+
+local host = FRP.newHost()
+local numbers: FRP.Event<number>, emitNumber: FRP.Emit<number> = host:source({
+	capture = function(value: number): number
+		return value
+	end,
+})
+
+local wrongEvent: FRP.Event<string> = numbers -- number is not string
+emitNumber("not a number")
+
+local futureNumber: FRP.Future<number> = FRP.Future.pure(1)
+local wrongFuture: FRP.Future<string> = futureNumber
+
+local reactiveNumber: FRP.Reactive<number> = FRP.stepper(0, numbers)
+local wrongReactive: FRP.Reactive<string> = reactiveNumber
+
+local behaviorNumber: FRP.Behavior<number> = FRP.constant(host, 1)
+local wrongBehavior: FRP.Behavior<string> = behaviorNumber
+
+local timeFunctionNumber: FRP.TimeFunction<number> = FRP.TimeFunction.constant(1)
+local wrongTimeFunction: FRP.TimeFunction<string> = timeFunctionNumber
+
+return {
+	wrongEvent,
+	wrongFuture,
+	wrongReactive,
+	wrongBehavior,
+	wrongTimeFunction,
+}

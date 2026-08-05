@@ -1,6 +1,8 @@
 --!nonstrict
 
 local FRP = require("../src/Core/FRP")
+local Codec = require("../src/Core/Codec")
+local Immutable = require("../src/Core/Immutable")
 
 local function capture(event)
 	local values = {}
@@ -223,6 +225,179 @@ return function(harness)
 		end, "aborted")
 		harness:equal(host:now(), 1)
 		harness:equal(reactive:current(), 1)
+	end)
+
+	harness:test("frp occurrence envelopes reject mutation without corrupting history", function()
+		local host = FRP.newHost()
+		local event, fire = host:source()
+		fire("original", 0)
+		local item = event:occurrences()[1]
+		harness:truthy(table.isfrozen(item))
+		harness:throws(function()
+			item.time = 99
+		end)
+		harness:throws(function()
+			item.value = "rewritten"
+		end)
+		local reread = event:occurrences()[1]
+		harness:equal(reread.time, 0)
+		harness:equal(reread.value, "original")
+		host:dispose()
+	end)
+
+	harness:test("frp first sink cannot rewrite occurrence metadata for later sinks", function()
+		local host = FRP.newHost()
+		local event, fire = host:source()
+		local later = nil
+		event:subscribe(function(_, _, item)
+			item.order = 999
+		end)
+		event:subscribe(function(value, time, item)
+			later = { value = value, time = time, itemTime = item.time, order = item.order }
+		end)
+		host:frame(1, function()
+			fire("safe")
+		end)
+		harness:deepEqual(later, { value = "safe", time = 1, itemTime = 1, order = 1 })
+		harness:equal(#host:getErrors(), 1)
+		harness:equal(event:occurrences()[1].order, 1)
+		host:dispose()
+	end)
+
+	harness:test("frp serializable capture detaches and freezes source payloads", function()
+		local host = FRP.newHost()
+		local capturePlain = Immutable.serializable()
+		local event, fire = host:source({ capture = capturePlain })
+		local shared = { score = 7 }
+		local input = { left = shared, right = shared }
+		fire(input, 0)
+		input.left.score = 99
+
+		local captured = event:occurrences()[1].value
+		harness:notEqual(captured, input)
+		harness:equal(captured.left, captured.right)
+		harness:notEqual(captured.left, shared)
+		harness:equal(captured.left.score, 7)
+		harness:truthy(table.isfrozen(captured))
+		harness:truthy(table.isfrozen(captured.left))
+		harness:throws(function()
+			captured.left.score = 10
+		end)
+		host:dispose()
+	end)
+
+	harness:test("frp fromOccurrences capture snapshots entries at construction", function()
+		local host = FRP.newHost()
+		local input = { nested = { value = 1 } }
+		local event = FRP.fromOccurrences(host, { { 1, input } }, {
+			capture = Immutable.serializable(),
+		})
+		input.nested.value = 2
+		host:advanceTo(1)
+		local captured = event:occurrences()[1].value
+		harness:equal(captured.nested.value, 1)
+		harness:truthy(table.isfrozen(captured.nested))
+		host:dispose()
+	end)
+
+	harness:test("frp pure and Future conversion capture minus-infinity payloads", function()
+		local host = FRP.newHost()
+		local capturePlain = Immutable.serializable()
+		local pureInput = { nested = { value = 1 } }
+		local pure = FRP.eventPure(host, pureInput, { capture = capturePlain })
+		pureInput.nested.value = 2
+
+		local pureCaptured = pure:occurrences()[1].value
+		harness:equal(pureCaptured.nested.value, 1)
+		harness:truthy(table.isfrozen(pureCaptured))
+		harness:truthy(table.isfrozen(pureCaptured.nested))
+
+		local futureInput = { nested = { value = 3 } }
+		local fromFuture = host:eventFromFuture(FRP.Future.pure(futureInput), {
+			capture = capturePlain,
+		})
+		futureInput.nested.value = 4
+
+		local futureCaptured = fromFuture:occurrences()[1].value
+		harness:equal(futureCaptured.nested.value, 3)
+		harness:truthy(table.isfrozen(futureCaptured))
+		harness:truthy(table.isfrozen(futureCaptured.nested))
+		host:dispose()
+	end)
+
+	harness:test("frp accumulation captures its initial Reactive value", function()
+		local host = FRP.newHost()
+		local updates = FRP.never(host)
+		local initial = { nested = { total = 3 } }
+		local accumulated = FRP.accumReactive(initial, updates, {
+			capture = Immutable.serializable(),
+		})
+		initial.nested.total = 99
+
+		local captured = accumulated:initial()
+		harness:notEqual(captured, initial)
+		harness:equal(captured.nested.total, 3)
+		harness:truthy(table.isfrozen(captured))
+		harness:truthy(table.isfrozen(captured.nested))
+		host:dispose()
+	end)
+
+	harness:test("frp serializable capture rejects metatable escape hatches", function()
+		local captureWithMetatable = Immutable.serializable({
+			clone = function()
+				return setmetatable({}, {
+					__index = { mutable = true },
+				})
+			end,
+		})
+		harness:throws(function()
+			captureWithMetatable({})
+		end, "without metatables")
+	end)
+
+	harness:test("frp capture callbacks are synchronous and fail before source mutation", function()
+		local host = FRP.newHost()
+		local event, fire = host:source({
+			capture = function(value)
+				coroutine.yield()
+				return value
+			end,
+		})
+		harness:throws(function()
+			fire("never committed", 0)
+		end, "may not yield")
+		harness:equal(host:now(), 0)
+		harness:equal(#event:occurrences(), 0)
+		host:dispose()
+	end)
+
+	harness:test("frp scan capture rolls back a reducer that mutates then fails", function()
+		local host = FRP.newHost()
+		local commands, fire = host:source()
+		local initial = { total = 0 }
+		local states = commands:scan(initial, function(state, amount)
+			state.total += amount
+			if amount == 2 then
+				error("mutated then failed")
+			end
+			return state
+		end, {
+			capture = Codec.clone,
+		})
+		local current = FRP.stepper({ total = 0 }, states)
+		initial.total = 100
+		fire(1, 1)
+		host:advanceTo(1)
+		harness:equal(current:current().total, 1)
+
+		harness:throws(function()
+			fire(2, 2)
+			host:advanceTo(2)
+		end, "mutated then failed")
+		harness:equal(host:now(), 1)
+		harness:equal(current:current().total, 1)
+		harness:equal(states._state.value.total, 1)
+		host:dispose()
 	end)
 
 	harness:test("frp failed initial and past pulls do not poison Event cycle guards", function()

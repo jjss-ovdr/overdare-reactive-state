@@ -44,6 +44,15 @@ local NEG_INFINITY = -math.huge
 local POS_INFINITY = math.huge
 local EMPTY = {}
 
+-- Occurrences are shared by Event history, Reactive history, and every sink
+-- that observes a frame. Silently falling back to mutable records would make
+-- one observer capable of rewriting the denotation seen by later observers,
+-- so fail clearly on hosts that cannot provide Luau's real table immutability.
+local freezeTable = table.freeze
+if type(freezeTable) ~= "function" then
+	error("Push-Pull FRP requires table.freeze support for immutable occurrences", 0)
+end
+
 local function pack(...)
 	return { n = select("#", ...), ... }
 end
@@ -88,6 +97,21 @@ local function call(label, callback, ...)
 		error(label .. " failed: " .. tostring(results[2]), 0)
 	end
 	return table.unpack(results, 2, results.n)
+end
+
+local function captureOption(options, label, level)
+	local capture = options.capture
+	if capture ~= nil and type(capture) ~= "function" then
+		error(label .. " capture must be a function", level or 3)
+	end
+	return capture
+end
+
+local function captureValue(capture, value, label)
+	if capture == nil then
+		return value
+	end
+	return call(label .. " capture", capture, value)
 end
 
 local function assertHost(host, level)
@@ -146,11 +170,11 @@ local function copyArray(values)
 end
 
 local function occurrence(time, value, order)
-	return {
+	return freezeTable({
 		time = time,
 		value = value,
 		order = order or 0,
-	}
+	})
 end
 
 local function mappedOccurrence(original, value)
@@ -212,6 +236,7 @@ local function newEvent(host, options)
 		_computeInitial = options.computeInitial,
 		_pastCompute = options.pastCompute,
 		_catchUpCompute = options.catchUpCompute,
+		_capture = options.capture,
 		_dirtyFrame = nil,
 		_memoFrame = nil,
 		_memo = nil,
@@ -538,18 +563,31 @@ function Event:scan(initialValue, reducer, options)
 		error("Event:scan requires a reducer", 2)
 	end
 	options = options or {}
+	local capture = captureOption(options, "Event:scan", 2)
+	local capturedInitial = captureValue(capture, initialValue, "Event:scan initial")
+	local function reduce(current, input)
+		if capture == nil then
+			return call("Event:scan", reducer, current, input)
+		end
+		-- Never hand the committed snapshot directly to a possibly mutating
+		-- reducer. A failed reducer can damage only this detached working value;
+		-- a successful result is captured again before it becomes observable.
+		local working = captureValue(capture, current, "Event:scan working state")
+		local result = call("Event:scan", reducer, working, input)
+		return captureValue(capture, result, "Event:scan result")
+	end
 	local parent = self
 	local output
 	output = newEvent(self._host, {
 		label = options.label,
 		parents = { parent },
-		state = { value = initialValue },
+		state = { value = capturedInitial },
 		compute = function(event, frame)
 			local staged = frame.stateCommits[event]
 			local current = if staged ~= nil then staged.value else event._state.value
 			local values = {}
 			for _, item in ipairs(parent:_evaluate(frame)) do
-				current = call("Event:scan", reducer, current, item.value)
+				current = reduce(current, item.value)
 				values[#values + 1] = mappedOccurrence(item, current)
 			end
 			frame.stateCommits[event] = { value = current }
@@ -559,20 +597,20 @@ function Event:scan(initialValue, reducer, options)
 			local current = event._state.value
 			local values = {}
 			for _, item in ipairs(parent:_initial()) do
-				current = call("Event:scan", reducer, current, item.value)
+				current = reduce(current, item.value)
 				values[#values + 1] = mappedOccurrence(item, current)
 			end
 			event._state = { value = current }
 			return values
 		end,
 		pastCompute = function(event, cutoff, inclusive, frame, commitState)
-			local current = initialValue
+			local current = capturedInitial
 			for _, item in ipairs(parent:_initial()) do
-				current = call("Event:scan", reducer, current, item.value)
+				current = reduce(current, item.value)
 			end
 			local values = {}
 			for _, item in ipairs(parent:_pastFinite(cutoff, inclusive, frame, commitState)) do
-				current = call("Event:scan", reducer, current, item.value)
+				current = reduce(current, item.value)
 				values[#values + 1] = mappedOccurrence(item, current)
 			end
 			if frame ~= nil and commitState then
@@ -1475,6 +1513,7 @@ function Host:_fire(event, value, time)
 		if time ~= nil and time ~= self._activeFrame.time then
 			error("source occurrence time must equal the active frame time", 3)
 		end
+		value = captureValue(event._capture, value, "Host:source")
 		self:_appendSource(event, value, self._activeFrame)
 		return
 	elseif self._phase == "delivering" then
@@ -1482,6 +1521,7 @@ function Host:_fire(event, value, time)
 		if occurrenceTime < self._time then
 			error("source occurrence time cannot move Host time backwards", 3)
 		elseif occurrenceTime > self._time then
+			value = captureValue(event._capture, value, "Host:source")
 			self:_schedule(event, occurrenceTime, value)
 		else
 			error("source occurrence cannot reopen an already closed logical time; schedule a future time", 3)
@@ -1496,9 +1536,11 @@ function Host:_fire(event, value, time)
 	elseif occurrenceTime == self._time and self._hasClosedFrame then
 		error("source occurrence cannot reopen an already closed logical time; use one Host:frame", 3)
 	elseif occurrenceTime > self._time then
+		value = captureValue(event._capture, value, "Host:source")
 		self:_schedule(event, occurrenceTime, value)
 		return
 	end
+	value = captureValue(event._capture, value, "Host:source")
 	self:frame(occurrenceTime, function()
 		self:_appendSource(event, value, self._activeFrame)
 	end)
@@ -1647,11 +1689,11 @@ function Host:_prepareAndCommit(frame)
 	end
 	for _, delivery in ipairs(frame.behaviorDeliveries) do
 		if delivery.sink._active then
-			local metadata = {
+			local metadata = freezeTable({
 				time = frame.time,
 				frameId = frame.id,
 				phaseOccurrence = delivery.occurrence,
-			}
+			})
 			local ok, message = runNoYield(
 				delivery.sink._callback,
 				delivery.value,
@@ -1823,9 +1865,11 @@ end
 function Host:source(options)
 	assertHost(self, 2)
 	options = options or {}
+	local capture = captureOption(options, "Host:source", 2)
 	local event = newEvent(self, {
 		label = options.label,
 		kind = "source",
+		capture = capture,
 	})
 	local function fire(value, time)
 		return self:_fire(event, value, time)
@@ -1851,6 +1895,8 @@ function Host:eventFromOccurrences(entries, options)
 	if type(entries) ~= "table" then
 		error("Host:eventFromOccurrences entries must be an array", 2)
 	end
+	options = options or {}
+	local capture = captureOption(options, "Host:eventFromOccurrences", 2)
 	local normalized = {}
 	local previousTime = NEG_INFINITY
 	for index, entry in ipairs(entries) do
@@ -1870,10 +1916,11 @@ function Host:eventFromOccurrences(entries, options)
 			error("Event occurrences must be in nondecreasing time order", 2)
 		end
 		previousTime = time
+		value = captureValue(capture, value, "Host:eventFromOccurrences occurrence #" .. tostring(index))
 		normalized[#normalized + 1] = occurrence(time, value, index)
 	end
 	local event = newEvent(self, {
-		label = options and options.label,
+		label = options.label,
 		kind = "scheduled",
 		compute = function(_, frame)
 			local output = {}
@@ -1967,6 +2014,7 @@ function Host:dispose()
 		event._computeInitial = nil
 		event._pastCompute = nil
 		event._catchUpCompute = nil
+		event._capture = nil
 	end
 	for reactive in next, self._reactives do
 		reactive._history = {}
@@ -2025,11 +2073,15 @@ function FRP.never(host, options)
 end
 
 function FRP.eventPure(host, value, options)
+	assertHost(host, 2)
+	options = options or {}
+	local capture = captureOption(options, "FRP.eventPure", 2)
+	local capturedValue = captureValue(capture, value, "FRP.eventPure")
 	return newEvent(host, {
-		label = options and options.label,
+		label = options.label,
 		kind = "pure",
 		computeInitial = function()
-			return { occurrence(NEG_INFINITY, value, 0) }
+			return { occurrence(NEG_INFINITY, capturedValue, 0) }
 		end,
 	})
 end
@@ -2050,13 +2102,19 @@ end
 
 function FRP.accumReactive(initialValue, eventOfFunctions, options)
 	assertEvent(eventOfFunctions, 2)
-	local changes = eventOfFunctions:scan(initialValue, function(current, update)
+	options = options or {}
+	local capture = captureOption(options, "FRP.accumReactive", 2)
+	-- The Reactive initial and the scan machine must own separate captured
+	-- snapshots. Sharing the caller's table here would leave initial()/at()
+	-- mutable even though later accumulated states follow the capture policy.
+	local capturedInitial = captureValue(capture, initialValue, "FRP.accumReactive initial")
+	local changes = eventOfFunctions:scan(capturedInitial, function(current, update)
 		if type(update) ~= "function" then
 			error("accumReactive event must contain functions", 0)
 		end
 		return call("accumReactive", update, current)
 	end, options)
-	return FRP.stepper(initialValue, changes, options)
+	return FRP.stepper(capturedInitial, changes, options)
 end
 
 function FRP.accumEvent(initialValue, eventOfFunctions, options)

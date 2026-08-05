@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0-dev.2 - Unreleased
+
+- Added a strict, generic public FRP type surface for Host, Future, Event,
+  Reactive, TimeFunction, Behavior, occurrences, emitters, and capture options.
+- Made occurrence metadata read-only in the public contract and frozen every
+  occurrence envelope at runtime so observers cannot rewrite shared history.
+- Added opt-in `capture` policies to source, pure/once/Future conversion,
+  `fromOccurrences`, `scan`, and accumulation, with copy-before-reduce staging
+  so a mutating reducer failure cannot damage the last committed state.
+- Added `FRP.Immutable.serializable()` for codec-backed clone plus recursive
+  freeze of plain-data graphs while preserving shared aliases.
+- Added positive/negative strict-consumer fixtures, adversarial immutability and
+  rollback tests, package smoke coverage, and a dedicated capture benchmark.
+
 ## 0.2.0-dev.1 - Unreleased
 
 - Replaced the root contract with Conal Elliott's Push-Pull FRP normal form:

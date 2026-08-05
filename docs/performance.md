@@ -2,7 +2,7 @@
 
 ## Push-Pull FRP 전용 suite
 
-FRP Core는 기존 Atom/Computed suite와 별도로 다음 7개 workload를 측정한다.
+FRP Core는 기존 Atom/Computed suite와 별도로 다음 8개 workload를 측정한다.
 
 | Workload | 검증하는 경로 |
 |---|---|
@@ -13,6 +13,7 @@ FRP Core는 기존 Atom/Computed suite와 별도로 다음 7개 workload를 측�
 | `behavior/continuous_pull` | Dynamic phase의 monotonic sampling |
 | `behavior/switcher_churn` | Reactive phase switch와 renderer 교체 |
 | `event/dormant_quiescence` | consumer 없는 mapper가 0회 실행되는지 |
+| `event/immutable_capture` | plain-data clone/freeze, 원본 alias 분리, shared alias 보존 |
 
 ```sh
 luau -O1 benchmarks/frp-run.luau -a standard O1
@@ -20,7 +21,7 @@ luau -O2 benchmarks/frp-run.luau -a standard O2
 luau -O2 --codegen benchmarks/frp-run.luau -a standard O2-codegen
 ```
 
-2026-08-04 실행에서 세 모드 모두 7개 correctness gate를 통과했다. 전체 median은 [Push-Pull FRP baseline](../benchmarks/results/2026-08-04-push-pull-frp.md)에 보존했다. CLI baseline은 구현 회귀 비교용이며 Studio/대상 기기의 절대 합격선이 아니다.
+2026-08-05 실행에서 세 모드 모두 8개 correctness gate를 통과했다. 전체 median과 변경 전 비교는 [strict/immutable Push-Pull FRP baseline](../benchmarks/results/2026-08-05-strict-immutable-frp.md)에 보존했고, 이전 7개 경로 수치는 [2026-08-04 baseline](../benchmarks/results/2026-08-04-push-pull-frp.md)에 남겼다. CLI baseline은 구현 회귀 비교용이며 Studio/대상 기기의 절대 합격선이 아니다.
 
 Event dependency는 weak-key라 버린 downstream graph는 source가 붙잡지 않는다. 반면 살아 있는 Host의 source prefix와 Reactive history는 Event Monad의 임의 과거 선택을 위해 의도적으로 보존한다. 장기 메모리 gate는 match/session epoch 종료 시 `Host:dispose()`까지 포함해 측정해야 한다.
 
@@ -43,7 +44,7 @@ luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
 
 각 모드는 correctness assertion과 p50/p95/ops-per-second를 함께 출력한다. CLI suite는 RemoteEvent 네트워크 왕복 시간을 포함하지 않으므로 Studio의 2-client 및 network emulation 결과와 혼합해서 해석하지 않는다.
 
-2026-08-04 실행에서 세 모드 모두 8개 gate를 통과했다. O2 codegen p50은 validated intent 2/8/32 peer에서 약 87.2k/88.2k/86.0k packets/s, authority encode+client reduce에서 약 66.2k/66.0k/64.3k packets/s였다. 전체 p50/p95는 [multiplayer-first protocol baseline](../benchmarks/results/2026-08-04-multiplayer-frp.md)에 보존했다.
+2026-08-05 실행에서 세 모드 모두 8개 gate를 통과했다. O2 codegen p50은 validated intent 2/8/32 peer에서 약 85.0k/86.8k/84.8k packets/s, authority encode+client reduce에서 약 65.4k/64.1k/64.4k packets/s였다. 전체 p50/p95와 재측정 설명은 [strict/immutable multiplayer protocol baseline](../benchmarks/results/2026-08-05-strict-immutable-multiplayer.md)에 보존했다.
 
 ## 기존 StateRuntime suite
 

@@ -12,7 +12,7 @@ local Debug = require("../dist/ReactiveState/Debug")
 local Overdare = require("../dist/ReactiveState/Overdare")
 local Types = require("../dist/ReactiveState/Types")
 
-assert(State.VERSION == "0.2.0-dev.1", "packaged VERSION mismatch")
+assert(State.VERSION == "0.2.0-dev.2", "packaged VERSION mismatch")
 assert(State.API_VERSION == 2, "packaged API_VERSION mismatch")
 assert(State.SEMANTICS_VERSION == 1, "packaged FRP semantics mismatch")
 assert(Network.PROTOCOL_VERSION == 1, "packaged Network.PROTOCOL_VERSION mismatch")
@@ -48,6 +48,20 @@ local held = State.stepper(0, changes)
 fire(1, 0)
 assert(held:at(0) == 0, "FRP strict-before boundary failed")
 assert(held:current() == 1, "FRP post-frame current failed")
+host:dispose()
+
+host = State.newHost()
+local capturedChanges, captureFire = host:source({
+	capture = State.Immutable.serializable(),
+})
+local input = { nested = { score = 7 } }
+captureFire(input, 0)
+input.nested.score = 99
+local capturedOccurrence = capturedChanges:occurrences()[1]
+assert(table.isfrozen(capturedOccurrence), "FRP occurrence envelope is mutable")
+assert(table.isfrozen(capturedOccurrence.value), "FRP captured payload root is mutable")
+assert(table.isfrozen(capturedOccurrence.value.nested), "FRP captured payload child is mutable")
+assert(capturedOccurrence.value.nested.score == 7, "FRP captured payload retained the input alias")
 host:dispose()
 
 local protocol = Network.defineFRPProtocol({

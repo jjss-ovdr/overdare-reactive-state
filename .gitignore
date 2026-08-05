@@ -9,3 +9,4 @@ coverage/
 *.key
 .idea/
 .vscode/
+tests/typecheck/.frp_public.negative.check.luau

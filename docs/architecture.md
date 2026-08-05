@@ -56,6 +56,21 @@ collect roots
 
 mapper, reducer, predicate, validator 성격의 사용자 callback은 prepare 안에서 동기식으로 실행된다. 오류나 yield가 발생하면 Host time, source prefix, Reactive current/history, stateful Event state를 commit하지 않는다. commit 이후 sink 오류는 다른 sink를 막지 않고 Host error channel로 격리한다.
 
+### 불변 occurrence와 opt-in capture
+
+Event history, Reactive history, sink가 공유하는 occurrence envelope은 생성 즉시 freeze한다. 배열 복사만으로 내부 record를 노출하지 않으며, 어느 observer도 기록된 time/order/value slot을 다시 쓸 수 없다.
+
+payload 자체는 generic `T`라 전역 clone/freeze하지 않는다. 함수, Instance, TimeFunction과 FRP graph handle의 identity를 깨뜨릴 수 있기 때문이다. Core의 기본 경로는 zero-copy + 비수정 계약이고, plain-data 경계만 `capture` hook으로 분리한다.
+
+```text
+external mutable table
+  -> source/pure/once/Future conversion/fromOccurrences capture
+  -> detached retained payload
+  -> frozen occurrence envelope
+```
+
+`Immutable.serializable()`은 default codec clone 뒤 table graph를 재귀적으로 freeze한다. shared alias는 유지하지만 custom codec 결과까지 포함해 metatable은 거부하며, default codec은 cycle, 함수와 Instance도 거부한다. `scan` capture 경로는 committed state를 reducer에 직접 넘기지 않고 working copy를 만든 뒤, reducer가 성공한 결과만 다시 capture해 stage한다. 따라서 reducer가 working copy를 수정한 뒤 오류를 내도 이전 committed state는 그대로다.
+
 동일 logical time에 들어올 수 있는 모든 외부 root는 frame callback 하나에 모아야 한다. 예약된 root도 barrier가 같은 time의 callback root와 합친다. 한 번 commit한 time은 재개방하지 않는다. `Event:merge`의 tie order는 root callback 도착 순서가 아니라 graph의 왼쪽/오른쪽 구조로 결정된다.
 
 ## Behavior renderer
@@ -93,6 +108,7 @@ src/Core/Runtime.luau        기존 StateRuntime 호환 계층
 src/Core/Clock.luau          기존 fixed/manual state clock
 src/Core/Codec.luau          serializable data codec
 src/Core/Hash.luau           canonical state hash
+src/Core/Immutable.luau      opt-in clone/freeze capture policy
 
 src/Overdare/init.luau       batched FRP driver + FRP RemoteEvent/State adapters
 src/Network/init.luau        StateRuntime snapshot/patch + FRP protocol facade

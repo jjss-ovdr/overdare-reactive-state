@@ -10,7 +10,7 @@ Fun<T, A>   = Constant(A) | Function(T -> A)
 Behavior<A> = Reactive<Fun<Time, A>>
 ```
 
-현재 버전은 `0.2.0-dev.1`, API version 2, FRP semantics version 1이다. 독립 Luau CLI에서 의미 테스트와 전용 벤치를 통과했지만 실제 OVERDARE Studio server/client 및 target-device gate 전에는 production-ready로 표시하지 않는다.
+현재 버전은 `0.2.0-dev.2`, API version 2, FRP semantics version 1이다. 독립 Luau CLI에서 의미 테스트와 전용 벤치를 통과했지만 실제 OVERDARE Studio server/client 및 target-device gate 전에는 production-ready로 표시하지 않는다.
 
 ## 가장 작은 예제
 
@@ -55,6 +55,21 @@ host:dispose()
 
 논문의 Haskell 구현이 사용하는 laziness, bottom, `unsafePerformIO`, `unamb` thread race를 Luau에서 흉내 내지는 않는다. strict single-threaded Luau에서는 timestamped source, 단조 Host frontier, 닫힌 frame barrier로 같은 denotation을 구현한다. 자세한 대응은 [논문 의미론과 Luau 이식](./docs/push-pull-frp.md)에 있다.
 
+## 타입과 불변성
+
+공개 FRP 타입은 `--!strict`에서 payload `T`를 `source → map/bind/ap/join/snapshot → sink`까지 보존한다. occurrence record의 `time`, `value`, `order`는 읽기 전용으로 선언되고 실제 table도 freeze된다.
+
+generic payload는 함수, Instance, 다른 FRP 값도 허용하므로 기본 deep-copy는 하지 않는다. mutable plain table을 장기간 보존하거나 네트워크 경계에서 받는다면 opt-in capture를 사용한다.
+
+```lua
+local capture = FRP.Immutable.serializable()
+local packets, emitPacket = host:source({ capture = capture })
+local history = FRP.fromOccurrences(host, entries, { capture = capture })
+local totals = packets:scan({ total = 0 }, reducer, { capture = capture })
+```
+
+기본 serializable capture는 codec clone 뒤 table graph를 재귀적으로 freeze하며 shared alias를 보존한다. capture와 reducer가 오류를 내거나 yield하면 frame은 commit되지 않는다. 자세한 계약은 [Core API](./docs/api.md#타입과-불변-payload)에 있다.
+
 ## OVERDARE 연결
 
 엔진 Signal을 각각 즉시 commit하면 같은 엔진 프레임의 동시성이 깨진다. `Overdare.attachFRP`는 입력을 모았다가 RunService phase마다 Host frame 하나로 닫는다.
@@ -87,6 +102,7 @@ driver:dispose() -- Host는 소유하지 않으므로 살아 있다.
 - `Reactive`: `pure`, `stepper`, `map`, `ap`, `bind`, `join`, `switcher`, `at`, `current`, `subscribe`
 - `Behavior`: `constant`, `fromFunction`, `time`, `map`, `ap`, `lift2`, `lift3`, `stepper`, `switcher`, `at`, `subscribe`
 - `Host`: `source`, `frame`, `advanceTo`, `sample`, `dispose`
+- `Immutable`: serializable plain-data clone/freeze capture
 
 논문 정규형의 `Behavior`에는 `bind`/`join`을 제공하지 않는다. 선택적 AI behavior tree는 이름 충돌을 피하려고 `ReactiveState.BehaviorTree`에 있다.
 
@@ -105,6 +121,7 @@ luau tests/run.luau
 luau -O2 tests/run.luau
 luau -O2 --codegen tests/run.luau
 luau-analyze src tests examples benchmarks
+node tools/check-frp-types.mjs
 ```
 
 전용 FRP 벤치:
@@ -123,7 +140,7 @@ luau -O2 benchmarks/multiplayer-run.luau -a standard O2
 luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
 ```
 
-현재 자동 검증은 124개 test, 7개 Push-Pull FRP workload, 8개 multiplayer protocol workload를 포함한다. 그중 fake RemoteEvent 기반 2-client test는 격리, 권한, duplicate/stale/gap, 양방향 유실·재전송, replay miss→snapshot, queue/packet limit과 disposal을 포함한다. CLI 수치는 회귀 baseline이며 실제 Studio/기기 성능을 대신하지 않는다.
+현재 자동 검증은 133개 test, 8개 Push-Pull FRP workload, 8개 multiplayer protocol workload를 포함한다. 그중 fake RemoteEvent 기반 2-client test는 격리, 권한, duplicate/stale/gap, 양방향 유실·재전송, replay miss→snapshot, queue/packet limit과 disposal을 포함한다. CLI 수치는 회귀 baseline이며 실제 Studio/기기 성능을 대신하지 않는다.
 
 ## 문서
 
