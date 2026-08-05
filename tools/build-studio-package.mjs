@@ -98,28 +98,48 @@ function parseString(source, pattern, label) {
 	return match[1];
 }
 
-async function readMetadata() {
-	const [rootSource, hashSource, networkSource, eventProtocolSource] = await Promise.all([
+async function readMetadata(studioObjects) {
+	const [
+		rootSource,
+		hashSource,
+		immutableSource,
+		runtimeSource,
+		networkSource,
+		eventProtocolSource,
+		overdareSource,
+	] = await Promise.all([
 		readFile(join(sourceRoot, "init.luau"), "utf8"),
 		readFile(join(sourceRoot, "Core", "Hash.luau"), "utf8"),
+		readFile(join(sourceRoot, "Core", "Immutable.luau"), "utf8"),
+		readFile(join(sourceRoot, "Core", "Runtime.luau"), "utf8"),
 		readFile(join(sourceRoot, "Network", "init.luau"), "utf8"),
 		readFile(join(sourceRoot, "Network", "EventProtocol.luau"), "utf8"),
+		readFile(join(sourceRoot, "Overdare", "init.luau"), "utf8"),
 	]);
 
 	const studioRequireContracts = [
-		[rootSource, "dynamicRequire(script.Core.FRP)", "root -> Core.FRP"],
-		[rootSource, "dynamicRequire(script.Core.Runtime)", "root -> Core.Runtime"],
-		[rootSource, "dynamicRequire(script.Core.Clock)", "root -> Core.Clock"],
-		[rootSource, "dynamicRequire(script.Core.Codec)", "root -> Core.Codec"],
-		[rootSource, "dynamicRequire(script.Core.Hash)", "root -> Core.Hash"],
-		[rootSource, "dynamicRequire(script.Core.Immutable)", "root -> Core.Immutable"],
-		[networkSource, "require(script.Parent.Core.Codec)", "Network -> Core.Codec"],
-		[networkSource, "require(script.Parent.Core.Hash)", "Network -> Core.Hash"],
-		[networkSource, "require(script.EventProtocol)", "Network -> Network.EventProtocol"],
-		[eventProtocolSource, "require(script.Parent.Parent.Core.Codec)", "Network.EventProtocol -> Core.Codec"],
+		[studioSource("init.luau", rootSource), "return require(script.Types)", "root -> Types", `${PACKAGE_NAME}/Types`],
+		[rootSource, "dynamicRequire(script.Core.FRP)", "root -> Core.FRP", `${PACKAGE_NAME}/Core/FRP`],
+		[rootSource, "dynamicRequire(script.Core.Runtime)", "root -> Core.Runtime", `${PACKAGE_NAME}/Core/Runtime`],
+		[rootSource, "dynamicRequire(script.Core.Clock)", "root -> Core.Clock", `${PACKAGE_NAME}/Core/Clock`],
+		[rootSource, "dynamicRequire(script.Core.Codec)", "root -> Core.Codec", `${PACKAGE_NAME}/Core/Codec`],
+		[rootSource, "dynamicRequire(script.Core.Hash)", "root -> Core.Hash", `${PACKAGE_NAME}/Core/Hash`],
+		[rootSource, "dynamicRequire(script.Core.Immutable)", "root -> Core.Immutable", `${PACKAGE_NAME}/Core/Immutable`],
+		[immutableSource, "dynamicRequire(script.Parent.Codec)", "Core.Immutable -> Core.Codec", `${PACKAGE_NAME}/Core/Codec`],
+		[runtimeSource, "require(script.Parent.Codec)", "Core.Runtime -> Core.Codec", `${PACKAGE_NAME}/Core/Codec`],
+		[runtimeSource, "require(script.Parent.Hash)", "Core.Runtime -> Core.Hash", `${PACKAGE_NAME}/Core/Hash`],
+		[networkSource, "require(script.Parent.Core.Codec)", "Network -> Core.Codec", `${PACKAGE_NAME}/Core/Codec`],
+		[networkSource, "require(script.Parent.Core.Hash)", "Network -> Core.Hash", `${PACKAGE_NAME}/Core/Hash`],
+		[networkSource, "require(script.EventProtocol)", "Network -> Network.EventProtocol", `${PACKAGE_NAME}/Network/EventProtocol`],
+		[eventProtocolSource, "require(script.Parent.Parent.Core.Codec)", "Network.EventProtocol -> Core.Codec", `${PACKAGE_NAME}/Core/Codec`],
+		[overdareSource, "require(script.Parent.Network)", "Overdare -> Network", `${PACKAGE_NAME}/Network`],
 	];
-	for (const [source, reference, label] of studioRequireContracts) {
-		invariant(source.includes(reference), `Studio require contract is missing or stale: ${label}`);
+	const objectByPath = new Map(studioObjects.map((object) => [object.studioPath, object]));
+	for (const [source, reference, label, targetPath] of studioRequireContracts) {
+		const matchCount = source.split(reference).length - 1;
+		invariant(matchCount === 1, `Studio require contract must occur exactly once: ${label}`);
+		const target = objectByPath.get(targetPath);
+		invariant(target?.className === "ModuleScript", `Studio require target is not a ModuleScript: ${label}`);
 	}
 
 	return {
@@ -431,8 +451,8 @@ async function checkNormalization() {
 
 async function build() {
 	const files = await assertSourceLayout();
-	const metadata = await readMetadata();
 	const studioObjects = buildStudioObjects(files);
+	const metadata = await readMetadata(studioObjects);
 	await prepareDist();
 	await cp(sourceRoot, packageRoot, { recursive: true, force: false, errorOnExist: true });
 	await Promise.all(files.map(async (file) => {
@@ -503,7 +523,8 @@ async function build() {
 
 async function verify() {
 	const files = await assertSourceLayout();
-	const metadata = await readMetadata();
+	const studioObjects = buildStudioObjects(files);
+	const metadata = await readMetadata(studioObjects);
 	invariant(await pathExists(manifestPath), "Package manifest is missing; run the builder first");
 	const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 
@@ -528,7 +549,7 @@ async function verify() {
 	invariant(JSON.stringify(actualRecords) === JSON.stringify(manifest.files), "Packaged source hashes do not match manifest");
 	invariant(packageHash(actualRecords) === manifest.build.packageSha256, "Package SHA-256 mismatch");
 	invariant(
-		JSON.stringify(buildStudioObjects(files)) === JSON.stringify(manifest.studioObjects),
+		JSON.stringify(studioObjects) === JSON.stringify(manifest.studioObjects),
 		"Studio object mapping mismatch"
 	);
 

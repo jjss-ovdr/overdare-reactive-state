@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0-dev.3 - Unreleased
+
+- Fixed `Core.Immutable` to require its sibling `Codec` ModuleScript in
+  OVERDARE while retaining the standalone Luau string path outside Studio.
+- Added package-build contracts for every Studio module dependency, including
+  exact Instance require expressions and ModuleScript target validation.
+
 ## 0.2.0-dev.2 - Unreleased
 
 - Added a strict, generic public FRP type surface for Host, Future, Event,

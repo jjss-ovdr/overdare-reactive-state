@@ -10,7 +10,7 @@ Fun<T, A>   = Constant(A) | Function(T -> A)
 Behavior<A> = Reactive<Fun<Time, A>>
 ```
 
-현재 버전은 `0.2.0-dev.2`, API version 2, FRP semantics version 1이다. 독립 Luau CLI에서 의미 테스트와 전용 벤치를 통과했지만 실제 OVERDARE Studio server/client 및 target-device gate 전에는 production-ready로 표시하지 않는다.
+현재 버전은 `0.2.0-dev.3`, API version 2, FRP semantics version 1이다. 독립 Luau CLI에서 의미 테스트와 전용 벤치를 통과했지만 실제 OVERDARE Studio server/client 및 target-device gate 전에는 production-ready로 표시하지 않는다.
 
 ## 가장 작은 예제
 

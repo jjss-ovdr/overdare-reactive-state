@@ -1,6 +1,6 @@
 # OVERDARE Studio 설치
 
-이 문서는 빌드된 `ReactiveState` source package를 World의 `ReplicatedStorage/ReactiveState`에 설치하는 절차다. 현재 배포물은 `0.2.0-dev.2` preview이며 Asset Store 공개 배포용 최종본이 아니다.
+이 문서는 빌드된 `ReactiveState` source package를 World의 `ReplicatedStorage/ReactiveState`에 설치하는 절차다. 현재 배포물은 `0.2.0-dev.3` preview이며 Asset Store 공개 배포용 최종본이 아니다.
 
 ## 1. 패키지 생성·검증
 
@@ -65,7 +65,7 @@ ReplicatedStorage
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local FRP = require(ReplicatedStorage:WaitForChild("ReactiveState"))
 
-assert(FRP.VERSION == "0.2.0-dev.2")
+assert(FRP.VERSION == "0.2.0-dev.3")
 assert(FRP.API_VERSION == 2)
 assert(FRP.SEMANTICS_VERSION == 1)
 

@@ -4,7 +4,19 @@
 -- values remain zero-copy by default so functions, Instances, and graph
 -- handles are still valid payloads when the caller owns their immutability.
 
-local DefaultCodec = require("./Codec")
+type CodecModule = {
+	clone: (value: any) -> any,
+}
+
+local DefaultCodec: CodecModule
+local dynamicRequire: any = require
+
+if script ~= nil then
+	-- OVERDARE accepts only ModuleScript instances at runtime.
+	DefaultCodec = dynamicRequire(script.Parent.Codec)
+else
+	DefaultCodec = dynamicRequire("./Codec")
+end
 
 local Immutable = {}
 

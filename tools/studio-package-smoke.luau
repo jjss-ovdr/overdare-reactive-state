@@ -12,7 +12,7 @@ local Debug = require("../dist/ReactiveState/Debug")
 local Overdare = require("../dist/ReactiveState/Overdare")
 local Types = require("../dist/ReactiveState/Types")
 
-assert(State.VERSION == "0.2.0-dev.2", "packaged VERSION mismatch")
+assert(State.VERSION == "0.2.0-dev.3", "packaged VERSION mismatch")
 assert(State.API_VERSION == 2, "packaged API_VERSION mismatch")
 assert(State.SEMANTICS_VERSION == 1, "packaged FRP semantics mismatch")
 assert(Network.PROTOCOL_VERSION == 1, "packaged Network.PROTOCOL_VERSION mismatch")
