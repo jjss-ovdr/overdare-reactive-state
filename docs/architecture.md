@@ -1,5 +1,32 @@
 # Push-Pull FRP 아키텍처
 
+## 한눈에 보는 구조
+
+```mermaid
+flowchart LR
+    signals["OVERDARE Signals<br/>RunService"]
+    remote["RemoteEvent<br/>server ↔ clients"]
+    adapter["Overdare adapter<br/>batch + local timestamp"]
+    protocol["Authority protocol<br/>validate · seq/ack · replay/snapshot"]
+    boundary["FRP source boundary<br/>optional clone + freeze"]
+    host["Host.frame(t)<br/>atomic prepare → commit"]
+    event["Event&lt;T&gt;<br/>discrete push/pull"]
+    reactive["Reactive&lt;T&gt;<br/>initial + changes"]
+    behavior["Behavior&lt;T&gt;<br/>Reactive&lt;TimeFunction&gt;"]
+    sink["Game sinks<br/>state · rendering · effects"]
+
+    signals --> adapter
+    remote <--> protocol
+    protocol --> adapter
+    adapter --> boundary --> host --> event
+    event --> reactive --> behavior --> sink
+    event --> sink
+    host -. "sample exact time" .-> behavior
+    event -. "authoritative output" .-> protocol
+```
+
+엔진 입력과 검증된 네트워크 입력은 adapter에서 같은 logical time 단위로 모여 `Host.frame(t)` 하나로 들어간다. Host는 Event/Reactive 변경을 원자적으로 commit하고, Behavior만 필요한 정확한 시각에 연속 값을 pull한다. 네트워크 계층은 Core 밖에서 client intent와 server authority를 관리하므로 FRP 의미론과 transport 정책이 섞이지 않는다.
+
 ## Denotation이 먼저다
 
 Core의 기준은 scheduler 구현이 아니라 다음 관찰 함수다.
