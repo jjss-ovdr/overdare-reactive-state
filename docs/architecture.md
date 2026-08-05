@@ -2,48 +2,40 @@
 
 ## 한눈에 보는 구조
 
+### 타입 정규형
+
 ```mermaid
-flowchart TB
-    subgraph denotation["정통 FRP 정규형"]
-        direction LR
-        future["Future&lt;A&gt;<br/>한 bound time의 값"]
-        event["Event&lt;A&gt;<br/>≅ Future&lt;Reactive&lt;A&gt;&gt;<br/>시간순 occurrence"]
-        reactive["Reactive&lt;A&gt;<br/>초깃값 A + changes Event&lt;A&gt;"]
-        timeFunction["TimeFunction&lt;A&gt;<br/>Constant(A) | Dynamic(Time → A)"]
-        behavior["Behavior&lt;A&gt;<br/>Reactive&lt;TimeFunction&lt;A&gt;&gt;"]
+graph LR
+    F["Future(A): one value at a bounded time"]
+    E["Event(A): Future(Reactive(A))"]
+    R["Reactive(A): initial A plus changes Event(A)"]
+    TF["TimeFunction(A): Constant or Dynamic"]
+    B["Behavior(A): Reactive(TimeFunction(A))"]
 
-        future -. "정규형 구성 요소" .-> event
-        event -- "changes" --> reactive
-        timeFunction -- "phase value" --> behavior
-    end
+    F -.-> E
+    E --> R
+    TF --> B
+```
 
-    subgraph execution["한 logical time의 Push-Pull 실행"]
-        direction LR
-        engine["Signals / validated packets"]
-        adapter["OVERDARE adapter<br/>batch + local timestamp"]
-        frame["Host.frame(t)<br/>동시간 입력 barrier"]
-        source["Source Event roots<br/>optional capture"]
-        push["PUSH<br/>dependent Event를 dirty 표시"]
-        graph["Event combinator graph<br/>map · filter · merge · bind · scan"]
-        demand["Demand<br/>subscription · Reactive · renderer"]
-        staged["Prepared result<br/>Event occurrence + Reactive state"]
-        behaviorPull["PULL at exact t<br/>활성 Dynamic TimeFunction만 sample"]
-        commit["Atomic commit<br/>frozen occurrence + history"]
-        sinks["Sinks<br/>game state · rendering · effects"]
+### 한 frame의 Push-Pull 실행
 
-        engine --> adapter --> frame --> source --> push --> graph
-        demand -- "PULL: 필요한 prefix만<br/>frame당 한 번 평가" --> graph
-        graph --> staged
-        staged --> commit
-        staged -- "활성 phase" --> behaviorPull
-        frame -. "sample time t" .-> behaviorPull
-        demand -. "연속 값 요구" .-> behaviorPull
-        behaviorPull --> commit --> sinks
-    end
+```mermaid
+graph TD
+    IN["Signals or validated packets"] --> ADAPTER["OVERDARE adapter"]
+    ADAPTER --> HOST["Host.frame(t)"]
+    HOST --> SOURCE["Source Event"]
+    SOURCE --> PUSH["PUSH: mark Event graph dirty"]
+    PUSH --> GRAPH["Event graph: map filter merge bind scan"]
 
-    event -. "denotation 구현" .-> graph
-    reactive -. "current / history" .-> staged
-    behavior -. "phase sampling" .-> behaviorPull
+    DEMAND["Demand from sink Reactive or renderer"] --> EPULL["PULL: evaluate required path"]
+    EPULL --> GRAPH
+
+    GRAPH --> STAGE["Stage Event occurrences and Reactive state"]
+    STAGE --> COMMIT["Atomic commit"]
+    STAGE --> BPULL["PULL active Dynamic TimeFunction at t"]
+    HOST --> BPULL
+    BPULL --> COMMIT
+    COMMIT --> SINKS["Game state rendering and effects"]
 ```
 
 핵심은 source가 값을 밀어 넣을 때 사용자 mapper를 즉시 실행하지 않는다는 점이다. push는 Event graph에 변경 가능성만 전파하고, subscription이나 Reactive가 요구한 경로만 pull해서 frame당 한 번 평가한다. `Behavior<A>`는 `Reactive<TimeFunction<A>>`이므로 phase 변경은 Event/Reactive 경로를 따르고, 활성 phase가 `Dynamic`일 때만 정확한 시각 `t`로 연속 값을 pull한다. 모든 준비가 성공해야 occurrence와 history가 함께 commit된다.
