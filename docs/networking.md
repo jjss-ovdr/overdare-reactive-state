@@ -120,6 +120,7 @@ assert(status.ok)
 - `status()`, `pending()`, `requestResync()`, `dispose()`.
 
 클라이언트가 보낸 exact intent packet은 ack 전까지 bounded pending deque에 보존된다. timeout이 지나면 새 prediction이나 새 sequence를 만들지 않고 같은 wire/sequence를 재전송한다.
+`eventFromSignal`에서 만든 outbound Event는 입력 Signal callback 안에서 즉시 전송하지 않고 다음 driver phase에서 함께 commit된다. 같은 phase의 `ScriptSignal:Wait()` 재개 순서는 driver의 `Connect` callback 완료 장벽이 아니므로, 동기 확인이 필요한 테스트는 sequence와 payload가 일치하는 새 packet을 제한 시간 동안 기다려야 한다.
 
 ## Sequence와 복구
 

@@ -12,6 +12,9 @@
 - Added opaque-callable regression coverage for the legacy adapters and the
   FRP-native two-client RemoteEvent authority/sequence protocol, including
   Players discovery, broadcast, PlayerRemoving, and cleanup.
+- Fixed the Studio multiplayer gate to await a new matching phase-buffered
+  outbound packet instead of treating one `Heartbeat:Wait()` as a post-callback
+  ordering barrier, with timeout diagnostics for channel status and Host errors.
 
 ## 0.2.0-dev.3 - Unreleased
 

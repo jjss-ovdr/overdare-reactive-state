@@ -55,6 +55,7 @@ bootstrapLine("BOOT", { "role=client", "stage=modules-loaded" })
 local HARNESS_VERSION = 1
 local SCHEMA_VERSION = 31
 local PREFIX = "[RSMP][v1]"
+local FRP_PHASE_TIMEOUT_SECONDS = 5
 
 local moduleProbeBefore = State.__RSMPProcessProbe ~= nil
 State.__RSMPProcessProbe = "client:" .. tostring(localPlayer.UserId)
@@ -132,10 +133,14 @@ local frpDriver = Overdare.attachFRP(frpHost, {
 	phase = "Heartbeat",
 	label = "studio-multiplayer.client." .. tostring(localPlayer.UserId),
 })
+local lastFrpStatus = nil
 local frpBinding = attachClientRemote(frpDriver, frpRemote, {
 	protocol = frpProtocol,
 	initialResync = false,
 	label = "studio-multiplayer.client-packets",
+	onStatus = function(status)
+		lastFrpStatus = status
+	end,
 })
 bootstrapLine("BOOT", { "role=client", "stage=frp-binding-ready" })
 assert(type(frpBinding) == "table" and type(frpBinding.arrivals) == "function",
@@ -191,6 +196,39 @@ local function packetNonce(packet)
 		return packet.payload.nonce
 	end
 	return packet.nonce
+end
+
+local function waitForBoundIntentPacket(nonce, previousSequence)
+	local deadline = os.clock() + FRP_PHASE_TIMEOUT_SECONDS
+	local heartbeatCount = 0
+	repeat
+		local packet = frpBinding:getLastIntentPacket()
+		if type(packet) == "table"
+			and type(packet.sequence) == "number"
+			and packet.sequence > previousSequence
+			and packet.messageType == "probe"
+			and packetNonce(packet) == nonce
+		then
+			return packet
+		end
+		RunService.Heartbeat:Wait()
+		heartbeatCount += 1
+	until os.clock() >= deadline
+
+	local channelStatus = frpBinding:status()
+	local hostErrors = frpHost:getErrors()
+	local lastHostError = hostErrors[#hostErrors]
+	error(table.concat({
+		"FRP outbound binding timed out waiting for a new matching intent packet",
+		"nonce=" .. tostring(nonce),
+		"previousSequence=" .. tostring(previousSequence),
+		"heartbeats=" .. tostring(heartbeatCount),
+		"lastStatus=" .. tostring(lastFrpStatus and lastFrpStatus.code),
+		"statusMessage=" .. tostring(lastFrpStatus and lastFrpStatus.message),
+		"pendingCount=" .. tostring(channelStatus and channelStatus.pendingCount),
+		"hostErrors=" .. tostring(#hostErrors),
+		"lastHostError=" .. tostring(lastHostError and lastHostError.message),
+	}, "; "), 0)
 end
 
 local stopArrivals = arrivals:subscribe(function(message, occurrenceTime)
@@ -439,10 +477,12 @@ local function handleCommand(message)
 	elseif caseName == "expectDeepInbound" then
 		-- The server sends the hostile payload immediately after this command.
 	elseif caseName == "frpBurst" then
+		local previousPacket = frpBinding:getLastIntentPacket()
+		local previousSequence = if type(previousPacket) == "table" and type(previousPacket.sequence) == "number"
+			then previousPacket.sequence
+			else 0
 		outboundSignal:Fire({ messageType = "probe", payload = { nonce = message.nonce }, clientTick = 100 })
-		RunService.Heartbeat:Wait()
-		local exactPacket = frpBinding:getLastIntentPacket()
-		assert(exactPacket ~= nil, "FRP outbound binding did not create an intent packet")
+		local exactPacket = waitForBoundIntentPacket(message.nonce, previousSequence)
 		frpRemote:FireServer(exactPacket)
 		send({ kind = "report", case = "frp-burst-sent" })
 	elseif caseName == "frpUnauthorized" then

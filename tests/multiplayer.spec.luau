@@ -241,6 +241,79 @@ return function(h)
 		f:dispose()
 	end)
 
+	h:test("FRP bindOutbound is phase-buffered and retains the exact client packet", function()
+		local f = makeFixture({ proxyMembers = true, initialResync = false, noSnapshot = true })
+		local clientSignal = fakeSignal(true)
+		local clientEvent, clientInput = f.clients[1].driver:eventFromSignal(clientSignal, {
+			label = "tests.client-outbound",
+		})
+		local clientOutput = f.clients[1].channel:bindOutbound(clientEvent)
+		local intents = {}
+		local violations = {}
+		local authority = {}
+		local stops = {
+			f.server:intents():subscribe(function(value)
+				intents[#intents + 1] = value
+			end),
+			f.server:violations():subscribe(function(value)
+				violations[#violations + 1] = value
+			end),
+			f.clients[1].channel:authority():subscribe(function(value)
+				authority[#authority + 1] = value
+			end),
+		}
+
+		clientSignal:Fire({ messageType = "move", payload = { delta = 9 }, clientTick = 99 })
+		h:equal(f.clients[1].channel:getLastIntentPacket(), nil)
+		h:equal(#f.hub.clientToServer, 0)
+		f:flushClient(1)
+		local exactPacket = f.clients[1].channel:getLastIntentPacket()
+		h:truthy(exactPacket ~= nil)
+		h:equal(exactPacket.kind, "intent")
+		h:equal(exactPacket.sequence, 1)
+		h:equal(exactPacket.messageType, "move")
+		h:equal(exactPacket.clientTick, 99)
+		h:equal(exactPacket.payload.delta, 9)
+		h:equal(#f.hub.clientToServer, 1)
+		h:equal(f.hub.clientToServer[1].packet, exactPacket)
+
+		f.hub.clientRemotes[f.players[1]]:FireServer(exactPacket)
+		f:flushServer()
+		h:equal(#intents, 1)
+		h:equal(intents[1].clientId, 101)
+		h:equal(#violations, 1)
+		h:equal(violations[1].code, "duplicate_intent")
+
+		local serverSignal = fakeSignal(true)
+		local serverEvent, serverInput = f.serverDriver:eventFromSignal(serverSignal, {
+			label = "tests.server-outbound",
+		})
+		local serverOutput = f.server:bindOutbound(serverEvent)
+		local sentBefore = #f.hub.serverToClient
+		serverSignal:Fire({
+			peer = f.players[1],
+			messageType = "state",
+			payload = { value = 42 },
+			serverTick = 2,
+		})
+		h:equal(#f.hub.serverToClient, sentBefore)
+		f:flushServer()
+		h:equal(#f.hub.serverToClient, sentBefore + 1)
+		f:flushClient(1)
+		h:equal(authority[1].payload.value, 42)
+		h:equal(#f.serverHost:getErrors(), 0)
+		h:equal(#f.clients[1].host:getErrors(), 0)
+
+		serverOutput:dispose()
+		serverInput:dispose()
+		clientOutput:dispose()
+		clientInput:dispose()
+		for _, stop in ipairs(stops) do
+			stop()
+		end
+		f:dispose()
+	end)
+
 	h:test("FRP RemoteEvent protocol isolates two clients and acknowledges intents", function()
 		local f = makeFixture()
 		local snapshots = { {}, {} }

@@ -41,6 +41,13 @@ stays in the payload. Module load must not create a RemoteEvent or connection.
 the wire envelope, including per-client sequence and ack. Disposing the parent
 binding also owns every outbound binding.
 
+`eventFromSignal` queues input and `bindOutbound` performs its transport effect
+when the driver closes the next configured phase. `ScriptSignal:Wait()` only
+waits for the signal to fire; it does not guarantee that every `Connect`
+callback on that same signal has already completed. The harness therefore waits
+for a new matching retained packet across bounded Heartbeat phases instead of
+treating one `Heartbeat:Wait()` as a post-flush barrier.
+
 Valid intent and authority envelopes cross the real RemoteEvent. The harness
 accepts an intent once, resends its exact wire packet, and verifies
 `duplicate_intent` without applying or authorizing it again. It also verifies a
