@@ -4,17 +4,27 @@ local FRP = require("../src/Core/FRP")
 local Network = require("../src/Network")
 local Overdare = require("../src/Overdare")
 
-local function fakeSignal()
+local function callableProxy(callback)
+	return setmetatable({}, {
+		__call = function(_proxy, ...)
+			return callback(...)
+		end,
+	})
+end
+
+local function fakeSignal(proxyMembers)
 	local signal = { listeners = {} }
-	function signal:Connect(callback)
+	local function connect(owner, callback)
 		local entry = { callback = callback, connected = true }
-		self.listeners[#self.listeners + 1] = entry
+		owner.listeners[#owner.listeners + 1] = entry
 		local connection = {}
-		function connection:Disconnect()
+		local function disconnect(_connection)
 			entry.connected = false
 		end
+		connection.Disconnect = if proxyMembers then callableProxy(disconnect) else disconnect
 		return connection
 	end
+	signal.Connect = if proxyMembers then callableProxy(connect) else connect
 	function signal:Fire(...)
 		for _, entry in ipairs(self.listeners) do
 			if entry.connected then
@@ -50,9 +60,9 @@ local function protocol(options)
 	})
 end
 
-local function fakeHub(players)
+local function fakeHub(players, proxyMembers)
 	local hub = {
-		serverSignal = fakeSignal(),
+		serverSignal = fakeSignal(proxyMembers),
 		clientSignals = {},
 		dropClientToServer = nil,
 		dropServerToClient = nil,
@@ -60,28 +70,32 @@ local function fakeHub(players)
 		serverToClient = {},
 	}
 	for _, player in ipairs(players) do
-		hub.clientSignals[player] = fakeSignal()
+		hub.clientSignals[player] = fakeSignal(proxyMembers)
 	end
 	local serverRemote = { OnServerEvent = hub.serverSignal }
-	function serverRemote:FireClient(player, packet)
+	local function fireClient(_remote, player, packet)
 		hub.serverToClient[#hub.serverToClient + 1] = { player = player, packet = packet }
 		if hub.dropServerToClient ~= nil and hub.dropServerToClient(player, packet) then
 			return
 		end
 		hub.clientSignals[player]:Fire(packet)
 	end
+	serverRemote.FireClient = if proxyMembers then callableProxy(fireClient) else fireClient
 	local clientRemotes = {}
 	for _, player in ipairs(players) do
 		local remote = { OnClientEvent = hub.clientSignals[player] }
-		function remote:FireServer(packet)
+		local function fireServer(_remote, packet)
 			hub.clientToServer[#hub.clientToServer + 1] = { player = player, packet = packet }
 			if hub.dropClientToServer ~= nil and hub.dropClientToServer(player, packet) then
 				return
 			end
 			hub.serverSignal:Fire(player, packet)
 		end
+		remote.FireServer = if proxyMembers then callableProxy(fireServer) else fireServer
 		clientRemotes[player] = remote
 	end
+	hub.serverRemote = serverRemote
+	hub.clientRemotes = clientRemotes
 	return hub, serverRemote, clientRemotes
 end
 
@@ -91,18 +105,32 @@ local function makeFixture(options)
 		{ UserId = 101, Name = "A" },
 		{ UserId = 202, Name = "B" },
 	}
-	local hub, serverRemote, clientRemotes = fakeHub(players)
+	local hub, serverRemote, clientRemotes = fakeHub(players, options.proxyMembers)
 	hub.dropClientToServer = options.dropClientToServer
 	hub.dropServerToClient = options.dropServerToClient
 	local serverHost = FRP.newHost()
-	local serverPhase = fakeSignal()
+	local serverPhase = fakeSignal(options.proxyMembers)
 	local serverDriver = Overdare.attachFRP(serverHost, { signal = serverPhase, errorPolicy = "raise" })
-	local playerRemoving = fakeSignal()
+	local playerRemoving = fakeSignal(options.proxyMembers)
+	local playersService = {
+		PlayerRemoving = playerRemoving,
+	}
+	local function getPlayers(_service)
+		return players
+	end
+	playersService.GetPlayers = if options.proxyMembers then callableProxy(getPlayers) else getPlayers
+	local serviceProvider = {
+		GetService = callableProxy(function(_provider, name)
+			assert(name == "Players", "unexpected service request")
+			return playersService
+		end),
+	}
 	local schema = options.protocol or protocol({ replayCapacity = options.replayCapacity or 8 })
 	local snapshotValue = 900
-	local server = Overdare.attachFRPServerRemote(serverDriver, serverRemote, {
+	local serverOptions = {
 		protocol = schema,
-		playerRemovingSignal = playerRemoving,
+		playerRemovingSignal = if options.proxyMembers then nil else playerRemoving,
+		game = if options.proxyMembers then serviceProvider else nil,
 		heartbeatInterval = if options.heartbeatInterval ~= nil then options.heartbeatInterval else false,
 		replayCapacity = options.replayCapacity,
 		maxPendingPerFrame = options.maxPendingPerFrame,
@@ -114,11 +142,12 @@ local function makeFixture(options)
 				serverTick = 1,
 			}
 		end,
-	})
+	}
+	local server = Overdare.attachFRPServerRemote(serverDriver, serverRemote, serverOptions)
 	local clients = {}
 	for index, player in ipairs(players) do
 		local host = FRP.newHost()
-		local phase = fakeSignal()
+		local phase = fakeSignal(options.proxyMembers)
 		local driver = Overdare.attachFRP(host, { signal = phase, errorPolicy = "raise" })
 		local client = Overdare.attachFRPClientRemote(driver, clientRemotes[player], {
 			protocol = schema,
@@ -169,6 +198,49 @@ local function makeFixture(options)
 end
 
 return function(h)
+	h:test("FRP RemoteEvent adapters accept callable engine proxy members", function()
+		local f = makeFixture({ proxyMembers = true, initialResync = false, noSnapshot = true })
+		h:equal(type(f.hub.serverSignal.Connect), "table")
+		h:equal(type(f.hub.serverRemote.FireClient), "table")
+		h:equal(type(f.hub.clientRemotes[f.players[1]].FireServer), "table")
+
+		local intents = {}
+		local authority = { {}, {} }
+		local stops = {
+			f.server:intents():subscribe(function(value)
+				intents[#intents + 1] = value
+			end),
+			f.clients[1].channel:authority():subscribe(function(value)
+				authority[1][#authority[1] + 1] = value
+			end),
+			f.clients[2].channel:authority():subscribe(function(value)
+				authority[2][#authority[2] + 1] = value
+			end),
+		}
+
+		h:truthy(f.clients[1].channel:send("move", { delta = 1 }, 1).ok)
+		f:flushServer()
+		h:equal(#intents, 1)
+		h:equal(intents[1].clientId, 101)
+		f:flushClients()
+		h:equal(f.clients[1].channel:status().pendingCount, 0)
+
+		local broadcast = f.server:broadcast(nil, "state", { value = 42 }, 2)
+		h:truthy(broadcast.ok)
+		h:equal(#broadcast.results, 2)
+		f:flushClients()
+		h:equal(authority[1][1].payload.value, 42)
+		h:equal(authority[2][1].payload.value, 42)
+
+		f.playerRemoving:Fire(f.players[1])
+		f:flushServer()
+		h:falsy(f.server:getPeerStatus(101).connected)
+		for _, stop in ipairs(stops) do
+			stop()
+		end
+		f:dispose()
+	end)
+
 	h:test("FRP RemoteEvent protocol isolates two clients and acknowledges intents", function()
 		local f = makeFixture()
 		local snapshots = { {}, {} }

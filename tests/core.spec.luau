@@ -315,6 +315,23 @@ return function(h)
 		h:truthy(scope:isDisposed())
 	end)
 
+	h:test("scope disposal accepts callable engine proxy members", function()
+		local disconnected = false
+		local connection = {
+			Disconnect = setmetatable({}, {
+				__call = function(_proxy, _connection)
+					disconnected = true
+				end,
+			}),
+		}
+		h:equal(type(connection.Disconnect), "table")
+		local runtime = State.create()
+		local scope = runtime:scope()
+		scope:add(connection)
+		scope:dispose()
+		h:truthy(disconnected)
+	end)
+
 	h:test("store reducer and selector share the Runtime commit", function()
 		local runtime = State.create()
 		local store = runtime:store({

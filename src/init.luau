@@ -123,7 +123,7 @@ export type Scope = {
 	isDisposed: (self: Scope) -> boolean,
 }
 
-FRP.VERSION = "0.2.0-dev.3"
+FRP.VERSION = "0.2.0-dev.4"
 FRP.API_VERSION = 2
 FRP.SEMANTICS_VERSION = 1
 FRP.clock = Clock

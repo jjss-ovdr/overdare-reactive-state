@@ -192,23 +192,55 @@ local function callableResult(callback, label, ...)
 	return unpackPacked(results, 2)
 end
 
+local function readMember(target, key)
+	if target == nil then
+		return nil
+	end
+	local ok, value = pcall(function()
+		return target[key]
+	end)
+	return if ok then value else nil
+end
+
 local function disposeOne(disposable)
 	if type(disposable) == "function" then
 		disposable()
-	elseif type(disposable) == "table" then
-		if type(disposable.dispose) == "function" then
+	elseif disposable ~= nil then
+		local dispose = readMember(disposable, "dispose")
+		local destroy = readMember(disposable, "Destroy")
+		local disconnect = readMember(disposable, "Disconnect")
+		local lowerDestroy = readMember(disposable, "destroy")
+		if type(dispose) == "function" then
 			disposable:dispose()
-		elseif type(disposable.Destroy) == "function" then
+		elseif destroy ~= nil then
 			disposable:Destroy()
-		elseif type(disposable.Disconnect) == "function" then
+		elseif disconnect ~= nil then
 			disposable:Disconnect()
-		elseif type(disposable.destroy) == "function" then
+		elseif type(lowerDestroy) == "function" then
 			disposable:destroy()
 		else
-			error("disposable table must provide dispose, Destroy, Disconnect, or destroy", 3)
+			local disconnected, disconnectError = pcall(function()
+				disposable:Disconnect()
+			end)
+			if disconnected then
+				return
+			end
+			local destroyed, destroyError = pcall(function()
+				disposable:Destroy()
+			end)
+			if not destroyed then
+				error(
+					"disposable must provide dispose, Destroy, Disconnect, or destroy (Disconnect: "
+						.. tostring(disconnectError)
+						.. "; Destroy: "
+						.. tostring(destroyError)
+						.. ")",
+					3
+				)
+			end
 		end
 	else
-		error("disposable must be a function or disposable table", 3)
+		error("disposable must be a function or disposable object", 3)
 	end
 end
 

@@ -8,6 +8,16 @@ local AttributePreset = {}
 local Preset = {}
 Preset.__index = Preset
 
+local function readMember(target: any, key: string): any
+	if target == nil then
+		return nil
+	end
+	local ok, value = pcall(function(): any
+		return target[key]
+	end)
+	return if ok then value else nil
+end
+
 local function cloneDefault(value: any, seen: { [any]: boolean }?): any
 	if type(value) ~= "table" then
 		return value
@@ -127,8 +137,12 @@ function Preset:tryValidate(attributes: { [string]: any }): (boolean, any)
 end
 
 local function readAttributes(instance: any): { [string]: any }
-	assert(instance ~= nil and type(instance.GetAttributes) == "function", "instance must implement :GetAttributes()")
-	return instance:GetAttributes()
+	assert(instance ~= nil, "instance must implement :GetAttributes()")
+	local ok, attributes = pcall(function(): any
+		return instance:GetAttributes()
+	end)
+	assert(ok, "instance:GetAttributes() failed: " .. tostring(attributes))
+	return attributes
 end
 
 local function applyNormalized(self: any, runtime: any, normalized: { [string]: any }, options: any)
@@ -174,16 +188,23 @@ function Preset:apply(instance: any, runtime: any, options: any?)
 	local scope = runtime:scope()
 
 	if options.observe then
-		assert(instance ~= nil and type(instance.GetAttributeChangedSignal) == "function", "observed instance must implement :GetAttributeChangedSignal()")
+		assert(instance ~= nil, "observed instance must implement :GetAttributeChangedSignal()")
 		for _, name in ipairs(self._keys) do
-			local signal = instance:GetAttributeChangedSignal(name)
-			assert(signal ~= nil and type(signal.Connect) == "function", "attribute signal must implement :Connect()")
-			local connection = signal:Connect(refresh)
+			local signalOk, signal = pcall(function(): any
+				return instance:GetAttributeChangedSignal(name)
+			end)
+			assert(signalOk and signal ~= nil, "instance:GetAttributeChangedSignal() failed: " .. tostring(signal))
+			local connectionOk, connection = pcall(function(): any
+				return signal:Connect(refresh)
+			end)
+			assert(connectionOk and connection ~= nil, "attribute signal:Connect() failed: " .. tostring(connection))
 			scope:add(function()
-				if connection ~= nil and type(connection.Disconnect) == "function" then
+				if readMember(connection, "Disconnect") ~= nil then
 					connection:Disconnect()
-				elseif connection ~= nil and type(connection.disconnect) == "function" then
+				elseif type(readMember(connection, "disconnect")) == "function" then
 					connection:disconnect()
+				else
+					connection:Disconnect()
 				end
 			end)
 		end

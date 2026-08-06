@@ -3,6 +3,14 @@
 local Overdare = require("../src/Overdare")
 local FRP = require("../src/Core/FRP")
 
+local function callableProxy(callback)
+	return setmetatable({}, {
+		__call = function(_proxy, ...)
+			return callback(...)
+		end,
+	})
+end
+
 local function fakeSignal()
 	local signal = { listeners = {} }
 	function signal:Connect(callback)
@@ -14,6 +22,28 @@ local function fakeSignal()
 		end
 		return connection
 	end
+	function signal:Fire(...)
+		for _, entry in ipairs(self.listeners) do
+			if entry.connected then
+				entry.callback(...)
+			end
+		end
+	end
+	return signal
+end
+
+local function engineProxySignal()
+	local signal = { listeners = {}, lastConnection = nil }
+	signal.Connect = callableProxy(function(owner, callback)
+		local entry = { callback = callback, connected = true }
+		owner.listeners[#owner.listeners + 1] = entry
+		local connection = {}
+		connection.Disconnect = callableProxy(function(_connection)
+			entry.connected = false
+		end)
+		owner.lastConnection = connection
+		return connection
+	end)
 	function signal:Fire(...)
 		for _, entry in ipairs(self.listeners) do
 			if entry.connected then
@@ -70,6 +100,111 @@ local function fakeAtom(runtime, initial)
 end
 
 return function(h)
+	h:test("Overdare accepts callable engine service and signal proxy members", function()
+		local phase = engineProxySignal()
+		local runService = { Heartbeat = phase }
+		local serviceProvider = {
+			GetService = callableProxy(function(_provider, name)
+				h:equal(name, "RunService")
+				return runService
+			end),
+		}
+		h:equal(type(serviceProvider.GetService), "table")
+		h:equal(type(phase.Connect), "table")
+
+		local host = FRP.newHost()
+		local driver = Overdare.attachFRP(host, { game = serviceProvider })
+		local frames = {}
+		local stop = driver:frames():subscribe(function(frame)
+			frames[#frames + 1] = frame
+		end)
+		phase:Fire(0.25)
+		h:equal(#frames, 1)
+		h:equal(frames[1].delta, 0.25)
+		stop()
+		driver:dispose()
+		h:falsy(phase.listeners[1].connected)
+		host:dispose()
+	end)
+
+	h:test("Overdare RemoteEvent adapters accept callable proxy members", function()
+		local serverSignal = engineProxySignal()
+		local serverReceived = {}
+		local sent = {}
+		local broadcasts = {}
+		local serverRemote = {
+			OnServerEvent = serverSignal,
+			FireClient = callableProxy(function(_remote, player, payload)
+				sent[#sent + 1] = { player = player, payload = payload }
+			end),
+			FireAllClients = callableProxy(function(_remote, payload)
+				broadcasts[#broadcasts + 1] = payload
+			end),
+		}
+		local server = Overdare.createServerReplication({
+			remoteEvent = serverRemote,
+			receiveIntent = function(player, payload)
+				serverReceived[#serverReceived + 1] = { player = player, payload = payload }
+				return true
+			end,
+		})
+		serverSignal:Fire("player-a", { value = 1 })
+		h:equal(#serverReceived, 1)
+		h:equal(serverReceived[1].player, "player-a")
+		h:truthy(server:send("player-a", { value = 2 }).ok)
+		h:equal(sent[1].payload.value, 2)
+		h:truthy(server:broadcast({ value = 3 }).ok)
+		h:equal(broadcasts[1].value, 3)
+		server:dispose()
+		h:falsy(serverSignal.listeners[1].connected)
+
+		local clientSignal = engineProxySignal()
+		local clientReceived = {}
+		local intents = {}
+		local clientRemote = {
+			OnClientEvent = clientSignal,
+			FireServer = callableProxy(function(_remote, payload)
+				intents[#intents + 1] = payload
+			end),
+		}
+		local client = Overdare.createClientPrediction({
+			remoteEvent = clientRemote,
+			receive = function(payload)
+				clientReceived[#clientReceived + 1] = payload
+				return true
+			end,
+		})
+		clientSignal:Fire({ value = 4 })
+		h:equal(clientReceived[1].value, 4)
+		h:truthy(client:sendIntent({ value = 5 }).ok)
+		h:equal(intents[1].value, 5)
+		client:dispose()
+		h:falsy(clientSignal.listeners[1].connected)
+	end)
+
+	h:test("Overdare keeps user replicator protocols function-only", function()
+		h:throws(function()
+			Overdare.createServerReplication({
+				connect = false,
+				replicator = {
+					receiveIntent = callableProxy(function()
+						return true
+					end),
+				},
+			})
+		end, "must implement receiveIntent")
+		h:throws(function()
+			Overdare.createClientPrediction({
+				connect = false,
+				replicator = {
+					receive = callableProxy(function()
+						return true
+					end),
+				},
+			})
+		end, "must implement receive/apply")
+	end)
+
 	h:test("Overdare FRP driver batches signals and preserves structural tie order", function()
 		local host = FRP.newHost()
 		local phase = fakeSignal()

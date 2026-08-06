@@ -10,7 +10,7 @@ Fun<T, A>   = Constant(A) | Function(T -> A)
 Behavior<A> = Reactive<Fun<Time, A>>
 ```
 
-현재 버전은 `0.2.0-dev.3`, API version 2, FRP semantics version 1이다. 독립 Luau CLI에서 의미 테스트와 전용 벤치를 통과했지만 실제 OVERDARE Studio server/client 및 target-device gate 전에는 production-ready로 표시하지 않는다.
+현재 버전은 `0.2.0-dev.4`, API version 2, FRP semantics version 1이다. 독립 Luau CLI에서 의미 테스트와 전용 벤치를 통과했지만 실제 OVERDARE Studio server/client 및 target-device gate 전에는 production-ready로 표시하지 않는다.
 
 ## 가장 작은 예제
 
@@ -157,7 +157,7 @@ luau -O2 benchmarks/multiplayer-run.luau -a standard O2
 luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
 ```
 
-현재 자동 검증은 133개 test, 8개 Push-Pull FRP workload, 8개 multiplayer protocol workload를 포함한다. 그중 fake RemoteEvent 기반 2-client test는 격리, 권한, duplicate/stale/gap, 양방향 유실·재전송, replay miss→snapshot, queue/packet limit과 disposal을 포함한다. CLI 수치는 회귀 baseline이며 실제 Studio/기기 성능을 대신하지 않는다.
+현재 자동 검증은 139개 test, 8개 Push-Pull FRP workload, 8개 multiplayer protocol workload를 포함한다. 그중 fake RemoteEvent 기반 2-client test는 격리, 권한, opaque engine callable, duplicate/stale/gap, 양방향 유실·재전송, replay miss→snapshot, queue/packet limit과 disposal을 포함한다. CLI 수치는 회귀 baseline이며 실제 Studio/기기 성능을 대신하지 않는다.
 
 ## 문서
 

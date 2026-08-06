@@ -107,6 +107,84 @@ local function readMember(target: any, key: string): any
 	return nil
 end
 
+local function bindCanonicalNamecall(target: any, name: string): any
+	if name == "Connect" then
+		return function(...: any): any
+			return target:Connect(...)
+		end
+	elseif name == "Disconnect" then
+		return function(...: any): any
+			return target:Disconnect(...)
+		end
+	elseif name == "Destroy" then
+		return function(...: any): any
+			return target:Destroy(...)
+		end
+	elseif name == "GetService" then
+		return function(...: any): any
+			return target:GetService(...)
+		end
+	elseif name == "GetPlayers" then
+		return function(...: any): any
+			return target:GetPlayers(...)
+		end
+	elseif name == "FireClient" then
+		return function(...: any): any
+			return target:FireClient(...)
+		end
+	elseif name == "FireAllClients" then
+		return function(...: any): any
+			return target:FireAllClients(...)
+		end
+	elseif name == "FireServer" then
+		return function(...: any): any
+			return target:FireServer(...)
+		end
+	end
+	return nil
+end
+
+-- OVERDARE engine members are callable through normal `:` syntax but are not
+-- guaranteed to report `type(member) == "function"`, or even to support a
+-- dynamic member read. Preserve canonical NAMECALL dispatch and let invocation
+-- establish capability. A hidden-member fallback is only safe when the lookup
+-- names contain one canonical engine method; multi-method disposal probes are
+-- handled separately.
+local function bindMember(target: any, names: { string }): any
+	if target == nil then
+		return nil
+	end
+	local hiddenCanonical = nil
+	local canonicalCount = 0
+	for _, name in ipairs(names) do
+		local canonical = bindCanonicalNamecall(target, name)
+		if canonical ~= nil then
+			canonicalCount += 1
+			hiddenCanonical = canonical
+		end
+		local member = readMember(target, name)
+		if member ~= nil then
+			-- Keep canonical engine methods as namecalls. Some host bindings expose
+			-- these as opaque callable members whose dispatch depends on `:` syntax.
+			if canonical ~= nil then
+				return canonical
+			end
+			-- Lower-case aliases are library/userland protocols, so retain their
+			-- ordinary Lua function contract instead of weakening validation for
+			-- arbitrary non-callable fields.
+			if type(member) == "function" then
+				return function(...: any): any
+					return member(target, ...)
+				end
+			end
+		end
+	end
+	if canonicalCount == 1 then
+		return hiddenCanonical
+	end
+	return nil
+end
+
 local function disposeOne(disposable: any)
 	if disposable == nil then
 		return
@@ -117,14 +195,34 @@ local function disposeOne(disposable: any)
 		return
 	end
 
-	local dispose = readMember(disposable, "dispose")
-		or readMember(disposable, "Disconnect")
-		or readMember(disposable, "disconnect")
-		or readMember(disposable, "Destroy")
-	if type(dispose) ~= "function" then
-		error("disposable must be a function or implement dispose/Disconnect/Destroy", 3)
+	local dispose = bindMember(disposable, { "dispose", "Disconnect", "disconnect", "Destroy" })
+	if dispose ~= nil then
+		dispose()
+		return
 	end
-	dispose(disposable)
+	-- A host object may only support NAMECALL and hide both members from dynamic
+	-- lookup. Connections conventionally expose Disconnect; Instances expose
+	-- Destroy, so probe both without weakening lower-case userland contracts.
+	local disconnected, disconnectError = pcall(function()
+		disposable:Disconnect()
+	end)
+	if disconnected then
+		return
+	end
+	local destroyed, destroyError = pcall(function()
+		disposable:Destroy()
+	end)
+	if destroyed then
+		return
+	end
+	error(
+		"disposable must implement dispose/Disconnect/Destroy (Disconnect: "
+			.. tostring(disconnectError)
+			.. "; Destroy: "
+			.. tostring(destroyError)
+			.. ")",
+		3
+	)
 end
 
 local Disposer = {}
@@ -195,9 +293,12 @@ local function connectSignal(signal: any, callback: (...any) -> ()): any
 		error("signal is missing", 3)
 	end
 
-	local connect = readMember(signal, "Connect") or readMember(signal, "connect")
-	if type(connect) == "function" then
-		local connection = connect(signal, callback)
+	local connect = bindMember(signal, { "Connect", "connect" })
+	if connect ~= nil then
+		local ok, connection = pcall(connect, callback)
+		if not ok then
+			error("signal Connect failed: " .. tostring(connection), 3)
+		end
 		if connection == nil then
 			error("signal Connect must return an explicit connection/disposer", 3)
 		end
@@ -247,9 +348,10 @@ local function resolveRunService(options: any): any
 	end
 
 	assert(serviceProvider ~= nil, "attach requires runService or a game service provider")
-	local getService = readMember(serviceProvider, "GetService") or readMember(serviceProvider, "getService")
-	assert(type(getService) == "function", "game service provider must implement :GetService(name)")
-	local runService = getService(serviceProvider, "RunService")
+	local getService = bindMember(serviceProvider, { "GetService", "getService" })
+	assert(getService ~= nil, "game service provider must implement :GetService(name)")
+	local ok, runService = pcall(getService, "RunService")
+	assert(ok, "game:GetService('RunService') failed: " .. tostring(runService))
 	assert(runService ~= nil, "game:GetService('RunService') returned nil")
 	return runService
 end
@@ -1279,7 +1381,7 @@ local function optionOrMethod(options: any, optionNames: { string }, target: any
 	for _, name in ipairs(methodNames) do
 		local method = readMember(target, name)
 		if type(method) == "function" then
-			return function(...: any)
+			return function(...: any): any
 				return method(target, ...)
 			end
 		end
@@ -1575,8 +1677,14 @@ function Overdare.createServerReplication(options: any): any
 			"server adapter requires remoteEvent/transport or explicit signal")
 	end
 
-	local send = optionOrMethod(options, { "send", "sendClient" }, transport, { "FireClient", "fireClient", "sendClient", "send" })
-	local broadcast = optionOrMethod(options, { "broadcast" }, transport, { "FireAllClients", "fireAllClients", "broadcast" })
+	local send = options.send or options.sendClient
+	if send == nil then
+		send = bindMember(transport, { "FireClient", "fireClient", "sendClient", "send" })
+	end
+	local broadcast = options.broadcast
+	if broadcast == nil then
+		broadcast = bindMember(transport, { "FireAllClients", "fireAllClients", "broadcast" })
+	end
 	local adapter = setmetatable({
 		_options = options,
 		_scope = newDisposer(options.scope),
@@ -1616,6 +1724,10 @@ function Overdare.createClientPrediction(options: any): any
 			"client adapter requires remoteEvent/transport or explicit signal")
 	end
 
+	local sendIntent = options.sendIntent or options.send
+	if sendIntent == nil then
+		sendIntent = bindMember(transport, { "FireServer", "fireServer", "sendIntent", "send" })
+	end
 	local adapter = setmetatable({
 		_options = options,
 		_scope = newDisposer(options.scope),
@@ -1625,8 +1737,7 @@ function Overdare.createClientPrediction(options: any): any
 			{ "validateIncoming", "validateReplication", "validate" }),
 		_validateIntent = optionOrMethod(options, { "validateIntent", "validateOutgoing" }, replicator,
 			{ "validateIntent", "validateOutgoing" }),
-		_sendIntent = optionOrMethod(options, { "sendIntent", "send" }, transport,
-			{ "FireServer", "fireServer", "sendIntent", "send" }),
+		_sendIntent = sendIntent,
 	}, ClientAdapter)
 
 	local connection = resolveSubscription(options, transport, "client", function(payload: any)
@@ -1732,11 +1843,11 @@ local function resolvePlayersService(options: any): any
 	if serviceProvider == nil then
 		return nil
 	end
-	local getService = readMember(serviceProvider, "GetService") or readMember(serviceProvider, "getService")
-	if type(getService) ~= "function" then
+	local getService = bindMember(serviceProvider, { "GetService", "getService" })
+	if getService == nil then
 		return nil
 	end
-	local ok, players = runSynchronous(getService, serviceProvider, "Players")
+	local ok, players = runSynchronous(getService, "Players")
 	if ok then
 		return players
 	end
@@ -1778,15 +1889,7 @@ local function invokeTransport(callback: any, label: string, ...: any): (boolean
 end
 
 local function remoteMethod(remoteEvent: any, names: { string }): any
-	for _, name in ipairs(names) do
-		local method = readMember(remoteEvent, name)
-		if type(method) == "function" then
-			return function(...: any)
-				return method(remoteEvent, ...)
-			end
-		end
-	end
-	return nil
+	return bindMember(remoteEvent, names)
 end
 
 local function callOptionalHook(channel: any, hook: any, value: any, label: string)
@@ -1961,6 +2064,9 @@ function FRPServerRemote:broadcast(players: any, messageType: string, payload: a
 	if self._disposed then
 		return { ok = false, code = "disposed", message = "server RemoteEvent channel is disposed" }
 	end
+	local getPlayers = if self._playersService == nil
+		then nil
+		else bindMember(self._playersService, { "GetPlayers", "getPlayers" })
 	if players == nil then
 		if type(self._options.getPlayers) == "function" then
 			local ok, resolved = runSynchronous(self._options.getPlayers)
@@ -1968,8 +2074,8 @@ function FRPServerRemote:broadcast(players: any, messageType: string, payload: a
 				return { ok = false, code = "players_error", message = tostring(resolved) }
 			end
 			players = resolved
-		elseif self._playersService ~= nil and type(readMember(self._playersService, "GetPlayers")) == "function" then
-			local ok, resolved = runSynchronous(readMember(self._playersService, "GetPlayers"), self._playersService)
+		elseif getPlayers ~= nil then
+			local ok, resolved = runSynchronous(getPlayers)
 			if not ok then
 				return { ok = false, code = "players_error", message = tostring(resolved) }
 			end

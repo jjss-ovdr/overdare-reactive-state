@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0-dev.4 - Unreleased
+
+- Replaced Lua `function` representation checks at OVERDARE engine boundaries
+  with capability-based colon calls for `GetService`, Signal `Connect`,
+  RemoteEvent `Fire*`, `GetPlayers`, `Disconnect`, and `Destroy`.
+- Kept user-supplied callbacks and replicator protocols strictly function-based
+  so opaque engine compatibility does not weaken library configuration errors.
+- Extended the same engine-callable compatibility to Runtime scope disposal and
+  AttributePreset observation.
+- Added opaque-callable regression coverage for the legacy adapters and the
+  FRP-native two-client RemoteEvent authority/sequence protocol, including
+  Players discovery, broadcast, PlayerRemoving, and cleanup.
+
 ## 0.2.0-dev.3 - Unreleased
 
 - Fixed `Core.Immutable` to require its sibling `Codec` ModuleScript in

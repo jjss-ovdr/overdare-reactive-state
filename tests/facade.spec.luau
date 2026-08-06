@@ -5,6 +5,14 @@ local Behavior = require("../src/BehaviorTree")
 local Bridge = require("../src/Bridge")
 local Debug = require("../src/Debug")
 
+local function callableProxy(callback)
+	return setmetatable({}, {
+		__call = function(_proxy, ...)
+			return callback(...)
+		end,
+	})
+end
+
 local function fakeRuntime()
 	local runtime = { _watches = {} }
 	function runtime:transaction(callback)
@@ -122,6 +130,44 @@ return function(h)
 		h:equal(speed:get(), 16)
 		scope:dispose()
 		scope:dispose()
+	end)
+
+	h:test("attribute preset accepts callable engine proxy members", function()
+		local runtime = fakeRuntime()
+		local speed = fakeAtom(0)
+		local attributes = { Speed = 16 }
+		local listener = nil
+		local connected = true
+		local signal = {
+			Connect = callableProxy(function(_signal, callback)
+				listener = callback
+				return {
+					Disconnect = callableProxy(function(_connection)
+						connected = false
+					end),
+				}
+			end),
+		}
+		local instance = {
+			GetAttributes = callableProxy(function(_instance)
+				return attributes
+			end),
+			GetAttributeChangedSignal = callableProxy(function(_instance, name)
+				h:equal(name, "Speed")
+				return signal
+			end),
+		}
+		local preset = AttributePreset.define({ Speed = { type = "number" } })
+		local scope = preset:apply(instance, runtime, {
+			observe = true,
+			targets = { Speed = speed },
+		})
+		h:equal(speed:get(), 16)
+		attributes = { Speed = 24 }
+		listener()
+		h:equal(speed:get(), 24)
+		scope:dispose()
+		h:falsy(connected)
 	end)
 
 	h:test("bridge transfers committed values one way and disposes cleanly", function()
