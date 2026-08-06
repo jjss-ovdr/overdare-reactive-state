@@ -293,6 +293,17 @@ local function connectSignal(signal: any, callback: (...any) -> ()): any
 		error("signal is missing", 3)
 	end
 
+	-- A subscription function is a public injection boundary, not an engine
+	-- object with a hidden Connect namecall. Check it before engine capability
+	-- binding so ordinary Luau hosts retain the documented lightweight form.
+	if type(signal) == "function" then
+		local connection = signal(callback)
+		if connection == nil then
+			error("signal subscription must return an explicit connection/disposer", 3)
+		end
+		return connection
+	end
+
 	local connect = bindMember(signal, { "Connect", "connect" })
 	if connect ~= nil then
 		local ok, connection = pcall(connect, callback)
@@ -301,14 +312,6 @@ local function connectSignal(signal: any, callback: (...any) -> ()): any
 		end
 		if connection == nil then
 			error("signal Connect must return an explicit connection/disposer", 3)
-		end
-		return connection
-	end
-
-	if type(signal) == "function" then
-		local connection = signal(callback)
-		if connection == nil then
-			error("signal subscription must return an explicit connection/disposer", 3)
 		end
 		return connection
 	end

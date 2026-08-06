@@ -23,6 +23,8 @@
 - frame time `t` 직후 `Reactive:at(t)`는 이전 값이고 `current()`는 새 값인지 확인한다.
 - Constant Behavior는 phase 진입 시 한 번, Dynamic Behavior는 advance마다 render되는지 확인한다.
 - 한 Host의 두 번째 active FRP driver가 거부되고 driver dispose 뒤 Host는 계속 동작하는지 확인한다.
+- `phaseSignal`과 `eventFromSignal`에 `callback -> disposer` 함수형 Signal을
+  주입했을 때 정상 구독되고 각 binding/driver dispose 시 disposer가 한 번씩 실행되는지 확인한다.
 
 - `Stepped`, `Heartbeat`, `RenderStepped`에서 platform이 전달하는 argument와 `deltaIndex`를 확인한다.
 - `Overdare.attach`의 priority/creation 순서가 매 실행 동일한지 확인한다.
@@ -71,4 +73,5 @@
 
 - Git tag, `VERSION`, `API_VERSION`, `SEMANTICS_VERSION`, network protocol/schema version과 Asset Store artifact source commit을 기록한다.
 - Source package와 배포 package에서 같은 test fixture 결과를 확인한다.
+- `docs/asset-store-release.md` 순서대로 RC를 비공개 업로드하고 Owned 탭에서 clean World로 다시 내려받아 manifest SHA, function Signal, server + 2-client `90/90`을 재검증한다.
 - 지원하지 않는 native physics 완전 rollback과 journal history를 문서에서 약속하지 않는다.

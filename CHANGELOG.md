@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0-rc.1 - Unreleased
+
+- Restored the documented function-subscription Signal boundary by resolving
+  plain Luau functions before OVERDARE's opaque canonical `Connect` namecall.
+- Added a regression that drives both the FRP clock and an input Event through
+  subscription functions and verifies queued occurrence time and disposal.
+- Embedded the MIT license in the distributed root ModuleScript and added a
+  private-first Asset Store release and clean-download verification runbook.
+- Preserved the Conal-style FRP Core and the verified opaque engine callable
+  adapter paths unchanged; this release candidate only changes Signal dispatch.
+
 ## 0.2.0-dev.4 - Unreleased
 
 - Replaced Lua `function` representation checks at OVERDARE engine boundaries

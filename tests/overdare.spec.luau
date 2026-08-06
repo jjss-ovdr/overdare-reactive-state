@@ -53,6 +53,29 @@ local function engineProxySignal()
 	end
 	return signal
 end
+
+local function functionSignal()
+	local callback = nil
+	local connected = false
+	local function subscribe(nextCallback)
+		callback = nextCallback
+		connected = true
+		return function()
+			callback = nil
+			connected = false
+		end
+	end
+	local function fire(...)
+		if callback ~= nil then
+			callback(...)
+		end
+	end
+	local function isConnected()
+		return connected
+	end
+	return subscribe, fire, isConnected
+end
+
 local function fakeRuntime()
 	local runtime = { transactions = 0, steps = {}, watches = {} }
 	function runtime:transaction(callback, metadata)
@@ -100,6 +123,32 @@ local function fakeAtom(runtime, initial)
 end
 
 return function(h)
+	h:test("Overdare preserves function subscription signal injection", function()
+		local phaseSignal, firePhase, phaseConnected = functionSignal()
+		local inputSignal, fireInput, inputConnected = functionSignal()
+		local host = FRP.newHost()
+		local driver = Overdare.attachFRP(host, { signal = phaseSignal })
+		local input, inputBinding = driver:eventFromSignal(inputSignal)
+		local observed = {}
+		local stop = input:subscribe(function(value, time)
+			observed[#observed + 1] = { value = value, time = time }
+		end)
+
+		h:truthy(phaseConnected())
+		h:truthy(inputConnected())
+		fireInput("queued")
+		h:equal(#observed, 0)
+		firePhase(0.25)
+		h:deepEqual(observed, { { value = "queued", time = 0.25 } })
+
+		stop()
+		inputBinding:dispose()
+		h:falsy(inputConnected())
+		driver:dispose()
+		h:falsy(phaseConnected())
+		host:dispose()
+	end)
+
 	h:test("Overdare accepts callable engine service and signal proxy members", function()
 		local phase = engineProxySignal()
 		local runService = { Heartbeat = phase }
