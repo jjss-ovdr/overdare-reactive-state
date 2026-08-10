@@ -2,6 +2,51 @@
 
 이 문서는 0.1의 `Atom/Computed/transaction` 호환 계층을 설명한다. 정통 FRP API는 [`api.md`](./api.md)를 사용한다. 새 인스턴스는 `FRP.createStateRuntime(options)`로 만든다. `FRP.create(options)`는 마이그레이션 기간의 deprecated alias다.
 
+게임 스크립트가 `Atom` / `:Get` / `:Set` / `Computed` / `Transaction` 형태를 기대한다면 **프로젝트 로컬 shim을 만들지 말고** [`FRP.createCapital`](#capital-facade-getset-스타일)을 사용한다.
+
+## 마이그레이션 대응표
+
+| 잘못된 project-local shim | 공식 API | 비고 |
+|---|---|---|
+| `ReactiveState.Atom(0)` | `local c = FRP.createCapital(); c.Atom(0)` 또는 `runtime:atom(0)` | Capital은 `:Get`/`:Set` 유지 |
+| `atom:Get()` / `atom:Set(v)` | Capital 동일, 또는 `atom:get()` / `atom:set(v)` | 공식 Runtime은 소문자 |
+| `Computed({a,b}, fn)` | `c.Computed({a,b}, fn)` 또는 `runtime:computed(fn)` | deps 배열은 무시되고 getter 중 auto-track |
+| `Computed`를 join마다 Dispose·재생성 | `runtime:computed(function() ... pairs(atoms) ... end)` | 동적 플레이어 집합도 getter 재평가로 충분 |
+| `Transaction(fn)` | `c.Transaction(fn)` / `runtime:transaction(fn)` | callback 안에서 `task.wait`/yield 금지 |
+| `ReactiveState.Event()` Connect/Fire | `c.Event()` 또는 `c.Bus()` | **로컬 신호 버스**. `FRP.Event`가 아님 |
+| 단일 ModuleScript shim 설치 | [`studio-install.md`](./studio-install.md)의 `dist/` 16+ object tree | blank World에서 공식 패키지를 설치할 것 |
+
+## Capital facade (`:Get`/`:Set` 스타일)
+
+```lua
+local FRP = require(ReplicatedStorage.ReactiveState)
+local Capital = FRP.createCapital({ label = "CoinRaceServer" })
+
+local score = Capital.Atom(0)
+local remaining = Capital.Atom(10)
+local leader = Capital.Computed(function()
+    -- 플레이어 Atom이 늘어도 Dispose/재생성 없이 getter가 다시 추적한다.
+    return remaining:Get()
+end)
+
+Capital.Transaction(function()
+    score:Set(score:Get() + 1)
+    remaining:Set(remaining:Get() - 1)
+end)
+
+local pickup = Capital.Event() -- local bus only; not FRP.Event
+pickup:Connect(function(player)
+    print("pickup", player)
+end)
+pickup:Fire("Player0")
+
+Capital:dispose()
+```
+
+- `FRP.createCapital(options)`는 내부적으로 `createStateRuntime`을 만들고 facade가 Runtime을 소유한다.
+- 이미 Runtime이 있으면 `FRP.Compat.bind(runtime)`을 쓴다(dispose 시 Runtime은 유지).
+- `Capital.Event` / `Capital.Bus`는 Connect/Fire pub/sub다. 시간·occurrence가 필요하면 [`api.md`](./api.md)의 `FRP.Event`와 `Host`를 사용한다.
+
 ## Runtime 만들기
 
 ```lua

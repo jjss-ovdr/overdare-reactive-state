@@ -2,6 +2,18 @@
 
 이 문서는 빌드된 `ReactiveState` source package를 World의 `ReplicatedStorage/ReactiveState`에 설치하는 절차다. 현재 배포물은 `0.2.0-rc.1` 비공개 배포 후보이며 Asset Store 공개 최종본이 아니다.
 
+**blank World / 에이전트 주의:** `ReplicatedStorage`에 동명 ModuleScript를 새로 만들어 Atom shim을 넣지 않는다. 이 파일이 소스 오브 트루스이고, 패키지 빌드 후 같은 내용이 `dist/INSTALL.md`로 복사된다. 공식 tree는 단일 파일이 아니라 아래 16+ object package다.
+
+## 어떤 API를 쓸지
+
+| 목적 | 진입점 | 문서 |
+|---|---|---|
+| Push-Pull FRP (`Host`, `Event`, `Reactive`) | `FRP.newHost()` | [`api.md`](./api.md) |
+| Atom/Computed 게임 상태 (`:get`/`:set`) | `FRP.createStateRuntime()` | [`state-runtime.md`](./state-runtime.md) |
+| shim 호환 Capital (`:Get`/`:Set`, `Transaction`) | `FRP.createCapital()` | [`state-runtime.md`](./state-runtime.md#capital-facade-getset-스타일) |
+
+`Capital.Event`는 로컬 Connect/Fire 버스일 뿐이며 `FRP.Event`가 아니다.
+
 ## 1. 패키지 생성·검증
 
 저장소 루트에서 실행한다.
@@ -48,6 +60,7 @@ ReplicatedStorage
     ├── AttributePreset (ModuleScript; AttributePreset/init.luau)
     ├── BehaviorTree (ModuleScript; BehaviorTree/init.luau)
     ├── Bridge (ModuleScript; Bridge/init.luau)
+    ├── Compat (ModuleScript; Compat/init.luau)
     ├── Core (Folder)
     │   ├── Clock (ModuleScript)
     │   ├── Codec (ModuleScript)
@@ -99,6 +112,14 @@ end)
 assert(value:at(1) == 1)
 assert(value:current() == 5)
 host:dispose()
+
+local capital = FRP.createCapital({ label = "studio-install.capital" })
+local score = capital.Atom(0)
+capital.Transaction(function()
+    score:Set(1)
+end)
+assert(score:Get() == 1)
+capital:dispose()
 
 print("Push-Pull FRP Studio require PASS")
 ```

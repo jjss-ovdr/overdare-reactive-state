@@ -12,7 +12,16 @@ Behavior<A> = Reactive<Fun<Time, A>>
 
 현재 버전은 비공개 배포 후보 `0.2.0-rc.1`, API version 2, FRP semantics version 1이다. 독립 Luau CLI gate와 이전 `dev.4`의 실제 OVERDARE Studio server + 2-client gate `90/90`을 통과했다. 이 RC artifact를 Asset Drawer에서 다시 내려받아 같은 Studio gate를 통과하기 전에는 공개 최종본으로 표시하지 않는다.
 
-## 가장 작은 예제
+## 두 가지 사용 경로
+
+| 경로 | 언제 | 진입점 |
+|---|---|---|
+| Push-Pull FRP | 시간·occurrence·논문 의미론이 필요할 때 | `FRP.newHost()` — 아래 최소 예제 |
+| Atom 게임 상태 | 점수/라운드 같은 동기 상태 그래프 | `FRP.createStateRuntime()` 또는 shim 호환 `FRP.createCapital()` |
+
+blank Studio World에서는 `ReplicatedStorage/ReactiveState`에 작은 Atom shim을 직접 만들지 말고, [`docs/studio-install.md`](./docs/studio-install.md)로 공식 package tree를 설치한다. 빌드 후에는 같은 문서가 `dist/INSTALL.md`로 복사된다. Capital facade와 마이그레이션 표는 [`docs/state-runtime.md`](./docs/state-runtime.md)에 있다.
+
+## 가장 작은 예제 (FRP)
 
 ```lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -44,6 +53,28 @@ host:dispose()
 ```
 
 `at(t)`가 정확한 발생 시각에는 이전 값을 반환하는 것은 의도된 의미론이다. `<=`로 바꾸지 않는다.
+
+### Atom/Capital 최소 예제
+
+```lua
+local FRP = require(ReplicatedStorage:WaitForChild("ReactiveState"))
+local Capital = FRP.createCapital({ label = "match" })
+
+local health = Capital.Atom(100)
+Capital.Transaction(function()
+    health:Set(health:Get() - 10)
+end)
+assert(health:Get() == 90)
+
+-- Capital.Event is a local Connect/Fire bus, not FRP.Event.
+local bus = Capital.Event()
+bus:Connect(function(amount)
+    print("damage", amount)
+end)
+bus:Fire(10)
+
+Capital:dispose()
+```
 
 ## Push와 pull
 
@@ -108,7 +139,7 @@ driver:dispose() -- Host는 소유하지 않으므로 살아 있다.
 
 정통 Functor/Monad 법칙을 지키기 위해 `Event.map/bind`와 `Reactive.map/bind` mapper에는 값만 전달한다. occurrence time이 도메인 로직에 필요하면 payload에 넣고, effect/sampling 경계에서는 `mapWithTime` 또는 `snapshot`을 사용한다.
 
-이전 `Atom/Computed/transaction` 구현은 마이그레이션용 `FRP.createStateRuntime()`에 남아 있으며 정통 FRP Core로 취급하지 않는다. 임시 호환 alias `FRP.create()`도 같은 State runtime을 만든다.
+이전 `Atom/Computed/transaction` 구현은 마이그레이션용 `FRP.createStateRuntime()`에 남아 있으며 정통 FRP Core로 취급하지 않는다. 임시 호환 alias `FRP.create()`도 같은 State runtime을 만든다. 게임 스크립트용 `:Get`/`:Set` 표면은 `FRP.createCapital()`이며, 그 `Event`는 로컬 버스일 뿐 `FRP.Event`가 아니다.
 
 ## 설치와 검증
 

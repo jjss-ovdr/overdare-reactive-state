@@ -3,7 +3,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local State = require(ReplicatedStorage:WaitForChild("ReactiveState"))
 
-local runtime = State.create({ label = "PlayerDomain" })
+local runtime = State.createStateRuntime({ label = "PlayerDomain" })
 local healthAtom = runtime:atom(100, {
 	label = "player.health",
 	validate = function(value)

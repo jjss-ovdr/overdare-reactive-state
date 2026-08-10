@@ -2,6 +2,11 @@
 
 ## 0.2.0-rc.1 - Unreleased
 
+- Added `FRP.createCapital()` / `FRP.Compat` so Atom/`Get`/`Set`/`Computed`/
+  `Transaction` game scripts use the official package instead of inventing a
+  project-local ReactiveState shim.
+- Documented that `Capital.Event` is a local Connect/Fire bus and is not
+  `FRP.Event`, with migration tables for blank-world Studio installs.
 - Restored the documented function-subscription Signal boundary by resolving
   plain Luau functions before OVERDARE's opaque canonical `Connect` namecall.
 - Added a regression that drives both the FRP clock and an input Event through

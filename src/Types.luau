@@ -552,6 +552,8 @@ export type FRP = {
 	isFuture: (value: unknown) -> boolean,
 	create: (options: DynamicCompatibility?) -> Runtime,
 	createStateRuntime: (options: DynamicCompatibility?) -> Runtime,
+	createCapital: (options: DynamicCompatibility?) -> DynamicCompatibility,
+	Compat: DynamicCompatibility,
 	isRuntime: (value: unknown) -> boolean,
 }
 

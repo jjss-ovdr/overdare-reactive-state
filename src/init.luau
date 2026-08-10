@@ -72,6 +72,7 @@ local Clock: DynamicModule
 local Codec: DynamicModule
 local Hash: DynamicModule
 local Immutable: DynamicModule
+local Compat: DynamicModule
 local dynamicRequire: DynamicModule = require
 
 if script ~= nil then
@@ -81,6 +82,7 @@ if script ~= nil then
 	Codec = dynamicRequire(script.Core.Codec)
 	Hash = dynamicRequire(script.Core.Hash)
 	Immutable = dynamicRequire(script.Core.Immutable)
+	Compat = dynamicRequire(script.Compat)
 else
 	-- Standalone Luau hosts resolve a directory init module relative to either
 	-- this file or the entry script. Try only local package layouts; Studio uses
@@ -101,12 +103,29 @@ else
 		end
 		error("ReactiveState could not load Core/" .. name .. ": " .. table.concat(messages, " | "), 0)
 	end
+	local function requireCompat(): DynamicModule
+		local attempts = {
+			"./Compat",
+			"../src/Compat",
+			"./src/Compat",
+		}
+		local messages: { string } = {}
+		for _, path in ipairs(attempts) do
+			local ok, module = pcall(dynamicRequire, path)
+			if ok then
+				return module
+			end
+			messages[#messages + 1] = tostring(module)
+		end
+		error("ReactiveState could not load Compat: " .. table.concat(messages, " | "), 0)
+	end
 	FRP = requireCore("FRP")
 	Runtime = requireCore("Runtime")
 	Clock = requireCore("Clock")
 	Codec = requireCore("Codec")
 	Hash = requireCore("Hash")
 	Immutable = requireCore("Immutable")
+	Compat = requireCompat()
 end
 
 export type ChangeSet = {
@@ -155,6 +174,7 @@ FRP.codec = Codec
 FRP.hash = Hash
 FRP.Immutable = Immutable
 FRP.StateRuntime = Runtime
+FRP.Compat = Compat
 
 -- Deprecated compatibility alias for the pre-FRP State runtime. New FRP code
 -- starts with newHost(); existing 0.1 projects can migrate incrementally.
@@ -164,6 +184,15 @@ end
 
 function FRP.createStateRuntime(options)
 	return Runtime.new(options)
+end
+
+-- Capital Atom/Computed facade for game scripts that expect :Get/:Set style
+-- APIs. Prefer this over inventing a project-local ReactiveState shim.
+-- Capital.Event is a local signal bus, not FRP.Event.
+function FRP.createCapital(options)
+	return Compat.create(function(runtimeOptions)
+		return Runtime.new(runtimeOptions)
+	end, options)
 end
 
 function FRP.isRuntime(value): boolean
