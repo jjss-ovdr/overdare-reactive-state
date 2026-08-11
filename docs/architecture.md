@@ -150,6 +150,7 @@ src/Core/Codec.luau          serializable data codec
 src/Core/Hash.luau           canonical state hash
 src/Core/Immutable.luau      opt-in clone/freeze capture policy
 
+src/Guides.luau              installed-only API discovery; frozen descriptive data
 src/Overdare/init.luau       batched FRP driver + FRP RemoteEvent/State adapters
 src/Network/init.luau        StateRuntime snapshot/patch + FRP protocol facade
 src/Network/EventProtocol.luau  intent/authority/ack/replay/snapshot epoch
@@ -159,7 +160,7 @@ src/AttributePreset/init.luau
 src/Debug/init.luau
 ```
 
-Root는 engine service에 자동 연결하지 않는다. `Overdare.attachFRP`를 호출해야만 RunService Signal을 연결한다.
+Root가 함께 노출하는 `Guides`는 frozen descriptive data뿐이며 engine service에 자동 연결하지 않는다. `Overdare.attachFRP`를 호출해야만 RunService Signal을 연결한다.
 
 ## 멀티플레이 경계
 

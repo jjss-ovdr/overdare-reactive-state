@@ -13,15 +13,23 @@ const positiveFiles = [
 	"src/Types.luau",
 	"src/init.luau",
 	"tests/typecheck/frp_public.luau",
+	"tests/typecheck/capital_public.luau",
 ];
-const negativeSource = resolve(
-	projectRoot,
-	"tests/typecheck/frp_public.negative.luau.disabled"
-);
-const negativeCheck = resolve(
-	projectRoot,
-	"tests/typecheck/.frp_public.negative.check.luau"
-);
+const negativeFixtures = [
+	{
+		name: "frp",
+		source: "tests/typecheck/frp_public.negative.luau.disabled",
+		check: "tests/typecheck/.frp_public.negative.check.luau",
+		expectedErrors: 7,
+		requiredText: "is read-only",
+	},
+	{
+		name: "capital",
+		source: "tests/typecheck/capital_public.negative.luau.disabled",
+		check: "tests/typecheck/.capital_public.negative.check.luau",
+		expectedErrors: 5,
+	},
+];
 
 function run(files) {
 	const result = spawnSync(analyzer, files, {
@@ -53,25 +61,29 @@ if (positive.status !== 0) {
 	throw new Error("strict public FRP positive fixture failed");
 }
 
-try {
-	await copyFile(negativeSource, negativeCheck);
-	const negative = run([negativeCheck]);
-	const errorCount = (negative.output.match(/TypeError:/g) || []).length;
-	if (
-		negative.status === 0
-		|| errorCount !== 7
-		|| !negative.output.includes("is read-only")
-		|| negative.output.includes("Unknown require")
-	) {
-		process.stderr.write(negative.output);
-		throw new Error(
-			`strict public FRP negative fixture expected 7 contract errors, got ${errorCount}`
-		);
+for (const fixture of negativeFixtures) {
+	const source = resolve(projectRoot, fixture.source);
+	const check = resolve(projectRoot, fixture.check);
+	try {
+		await copyFile(source, check);
+		const negative = run([fixture.check]);
+		const errorCount = (negative.output.match(/TypeError:/g) || []).length;
+		if (
+			negative.status === 0
+			|| errorCount !== fixture.expectedErrors
+			|| (fixture.requiredText != null && !negative.output.includes(fixture.requiredText))
+			|| negative.output.includes("Unknown require")
+		) {
+			process.stderr.write(negative.output);
+			throw new Error(
+				`strict public ${fixture.name} negative fixture expected ${fixture.expectedErrors} contract errors, got ${errorCount}`
+			);
+		}
+	} finally {
+		await rm(check, { force: true });
 	}
-} finally {
-	await rm(negativeCheck, { force: true });
 }
 
 console.log(
-	`PASS strict public FRP types (positive=0 errors, negative=7 expected errors, baseline=${toolchain.commit.slice(0, 12)})`
+	`PASS strict public types (positive=0 errors, frp-negative=7, capital-negative=5, baseline=${toolchain.commit.slice(0, 12)})`
 );

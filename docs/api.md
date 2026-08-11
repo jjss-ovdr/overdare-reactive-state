@@ -2,7 +2,7 @@
 
 모든 코어 값은 하나의 `Host`에 속한다. 서로 다른 Host의 Event/Reactive/Behavior를 결합하면 오류다. 조합자 callback은 순수하고 동기식이어야 하며 yield하면 frame이 중단된다.
 
-> **이름 주의:** `FRP.Event`는 Conal Push-Pull FRP의 occurrence 스트림이다. OVERDARE/Roblox식 `Connect`/`Fire` 신호나 `FRP.createCapital().Event()` 로컬 버스와 다르다. Atom 게임 상태 API는 [`state-runtime.md`](./state-runtime.md)를 본다.
+> **이름 주의:** `FRP.Event`는 Conal Push-Pull FRP의 occurrence 스트림이다. OVERDARE/Roblox식 `Connect`/`Fire` 신호나 `FRP.createCapital().Bus()` 로컬 버스와 다르다. `Capital.Event()`는 deprecated bus alias다. Atom 게임 상태 API는 [`state-runtime.md`](./state-runtime.md)를 본다.
 
 ## 타입과 불변 payload
 
@@ -76,7 +76,7 @@ local never = FRP.Future.never()           -- +∞
 
 ## Event
 
-`Event<A>`는 time 비감소 occurrence 목록이다. 같은 time과 같은 payload도 별개로 보존한다. 엔진 Signal의 `Connect`/`Fire`나 `FRP.createCapital().Event()` 로컬 버스와 같은 API가 아니다.
+`Event<A>`는 time 비감소 occurrence 목록이다. 같은 time과 같은 payload도 별개로 보존한다. 엔진 Signal의 `Connect`/`Fire`나 `FRP.createCapital().Bus()` 로컬 버스와 같은 API가 아니다.
 
 ```lua
 local input, emit = host:source({ label = "input" })

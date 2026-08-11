@@ -495,10 +495,126 @@ export type Runtime = {
 	dispose: (self: Runtime) -> (),
 }
 
+export type CapitalConnection = {
+	Dispose: (self: CapitalConnection) -> (),
+	dispose: (self: CapitalConnection) -> (),
+	Disconnect: (self: CapitalConnection) -> (),
+	disconnect: (self: CapitalConnection) -> (),
+	Destroy: (self: CapitalConnection) -> (),
+}
+
+export type CapitalSource<T> = {
+	Get: (self: CapitalSource<T>) -> T,
+	get: (self: CapitalSource<T>) -> T,
+	Subscribe: (
+		self: CapitalSource<T>,
+		callback: (value: T) -> (),
+		options: DynamicCompatibility?
+	) -> CapitalConnection,
+	subscribe: (
+		self: CapitalSource<T>,
+		callback: (value: T) -> (),
+		options: DynamicCompatibility?
+	) -> CapitalConnection,
+	Dispose: (self: CapitalSource<T>) -> (),
+	dispose: (self: CapitalSource<T>) -> (),
+	Destroy: (self: CapitalSource<T>) -> (),
+}
+
+export type CapitalAtom<T> = CapitalSource<T> & {
+	Set: (self: CapitalAtom<T>, value: T) -> (),
+	set: (self: CapitalAtom<T>, value: T) -> (),
+	Update: (self: CapitalAtom<T>, updater: (T) -> T) -> (),
+	update: (self: CapitalAtom<T>, updater: (T) -> T) -> (),
+}
+
+export type CapitalComputed<T> = CapitalSource<T>
+
+export type CapitalBus = {
+	Connect: (self: CapitalBus, callback: (...DynamicCompatibility) -> ()) -> CapitalConnection,
+	connect: (self: CapitalBus, callback: (...DynamicCompatibility) -> ()) -> CapitalConnection,
+	Fire: (self: CapitalBus, ...DynamicCompatibility) -> (),
+	fire: (self: CapitalBus, ...DynamicCompatibility) -> (),
+	Dispose: (self: CapitalBus) -> (),
+	dispose: (self: CapitalBus) -> (),
+	Destroy: (self: CapitalBus) -> (),
+}
+
+type CapitalComputedFactory = (<T>(
+	getter: () -> T,
+	options: DynamicCompatibility?
+) -> CapitalComputed<T>) & (<T>(
+	dependencies: { CapitalSource<DynamicCompatibility> },
+	getter: () -> T,
+	options: DynamicCompatibility?
+) -> CapitalComputed<T>)
+
+export type CapitalFacade = {
+	runtime: Runtime,
+	Atom: <T>(initialValue: T, options: DynamicCompatibility?) -> CapitalAtom<T>,
+	atom: <T>(initialValue: T, options: DynamicCompatibility?) -> CapitalAtom<T>,
+	Computed: CapitalComputedFactory,
+	computed: CapitalComputedFactory,
+	Transaction: (callback: () -> (), metadata: DynamicCompatibility?) -> ChangeSet?,
+	transaction: (callback: () -> (), metadata: DynamicCompatibility?) -> ChangeSet?,
+	Bus: () -> CapitalBus,
+	Event: () -> CapitalBus,
+	dispose: (self: CapitalFacade) -> (),
+	Dispose: (self: CapitalFacade) -> (),
+	Destroy: (self: CapitalFacade) -> (),
+}
+
+export type CompatNamespace = {
+	KIND: string,
+	EVENT_KIND: string,
+	bind: (runtime: Runtime, options: DynamicCompatibility?) -> CapitalFacade,
+	create: (
+		createRuntime: (options: DynamicCompatibility?) -> Runtime,
+		options: DynamicCompatibility?
+	) -> CapitalFacade,
+}
+
+export type GuideRoute = {
+	read useWhen: string,
+	read entryPoint: string,
+	read readNext: string,
+}
+
+export type ReadonlyStringList = { read [number]: string }
+
+export type ServerAuthoritativeMultiplayerGuide = {
+	read id: string,
+	read useWhen: string,
+	read state: string,
+	read protocol: string,
+	read serverTransport: string,
+	read clientTransport: string,
+	read serverInput: string,
+	read clientInput: string,
+	read initialSync: string,
+	read steps: ReadonlyStringList,
+	read invariants: ReadonlyStringList,
+	read avoid: ReadonlyStringList,
+	read verification: ReadonlyStringList,
+}
+
+export type GuidesNamespace = {
+	read GUIDE_VERSION: number,
+	read START_HERE: string,
+	read routes: {
+		read pushPullFRP: GuideRoute,
+		read localGameState: GuideRoute,
+		read serverAuthoritativeMultiplayer: GuideRoute,
+	},
+	read serverAuthoritativeMultiplayer: ServerAuthoritativeMultiplayerGuide,
+}
+
 export type FRP = {
 	VERSION: string,
 	API_VERSION: number,
 	SEMANTICS_VERSION: number,
+	START_HERE: string,
+	Guides: GuidesNamespace,
 	NEG_INFINITY: number,
 	POS_INFINITY: number,
 	Host: Host,
@@ -552,8 +668,8 @@ export type FRP = {
 	isFuture: (value: unknown) -> boolean,
 	create: (options: DynamicCompatibility?) -> Runtime,
 	createStateRuntime: (options: DynamicCompatibility?) -> Runtime,
-	createCapital: (options: DynamicCompatibility?) -> DynamicCompatibility,
-	Compat: DynamicCompatibility,
+	createCapital: (options: DynamicCompatibility?) -> CapitalFacade,
+	Compat: CompatNamespace,
 	isRuntime: (value: unknown) -> boolean,
 }
 
@@ -663,6 +779,42 @@ function TypeWitness.hostError(): HostError
 end
 
 function TypeWitness.runtime(): Runtime
+	error("type witness", 0)
+end
+
+function TypeWitness.capitalConnection(): CapitalConnection
+	error("type witness", 0)
+end
+
+function TypeWitness.capitalSource<T>(_value: T?): CapitalSource<T>
+	error("type witness", 0)
+end
+
+function TypeWitness.capitalAtom<T>(_value: T?): CapitalAtom<T>
+	error("type witness", 0)
+end
+
+function TypeWitness.capitalComputed<T>(_value: T?): CapitalComputed<T>
+	error("type witness", 0)
+end
+
+function TypeWitness.capitalBus(): CapitalBus
+	error("type witness", 0)
+end
+
+function TypeWitness.capitalFacade(): CapitalFacade
+	error("type witness", 0)
+end
+
+function TypeWitness.guideRoute(): GuideRoute
+	error("type witness", 0)
+end
+
+function TypeWitness.serverAuthoritativeMultiplayerGuide(): ServerAuthoritativeMultiplayerGuide
+	error("type witness", 0)
+end
+
+function TypeWitness.guides(): GuidesNamespace
 	error("type witness", 0)
 end
 

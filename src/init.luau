@@ -27,6 +27,14 @@ SOFTWARE.
 -- The package root is the Conal-style Push-Pull FRP API. The previous
 -- Atom/Computed runtime remains available as an explicitly named compatibility
 -- extension while projects migrate; it is not the FRP denotation.
+--
+-- START HERE in an installed Studio package:
+--   local packageRoot = ReplicatedStorage:WaitForChild("ReactiveState")
+--   local ReactiveState = require(packageRoot)
+--   print(ReactiveState.START_HERE)
+--   local guide = ReactiveState.Guides.serverAuthoritativeMultiplayer
+-- The guide names the canonical Network + Overdare APIs and is descriptive;
+-- requiring this root still creates no Instance, signal connection, or channel.
 
 -- A static string require gives the standalone analyzer access to the canonical
 -- type witnesses. The function is intentionally never called at runtime, so
@@ -65,6 +73,15 @@ export type Behavior<T> = typeof(staticTypes().behavior(nil :: T?))
 export type Future<T> = typeof(staticTypes().future(nil :: T?))
 export type TimeFunction<T> = typeof(staticTypes().timeFunction(nil :: T?))
 export type Runtime = typeof(staticTypes().runtime())
+export type CapitalConnection = typeof(staticTypes().capitalConnection())
+export type CapitalSource<T> = typeof(staticTypes().capitalSource(nil :: T?))
+export type CapitalAtom<T> = typeof(staticTypes().capitalAtom(nil :: T?))
+export type CapitalComputed<T> = typeof(staticTypes().capitalComputed(nil :: T?))
+export type CapitalBus = typeof(staticTypes().capitalBus())
+export type CapitalFacade = typeof(staticTypes().capitalFacade())
+export type GuideRoute = typeof(staticTypes().guideRoute())
+export type ServerAuthoritativeMultiplayerGuide = typeof(staticTypes().serverAuthoritativeMultiplayerGuide())
+export type GuidesNamespace = typeof(staticTypes().guides())
 
 local FRP: FRPModule
 local Runtime: DynamicModule
@@ -73,6 +90,7 @@ local Codec: DynamicModule
 local Hash: DynamicModule
 local Immutable: DynamicModule
 local Compat: DynamicModule
+local Guides: DynamicModule
 local dynamicRequire: DynamicModule = require
 
 if script ~= nil then
@@ -83,6 +101,7 @@ if script ~= nil then
 	Hash = dynamicRequire(script.Core.Hash)
 	Immutable = dynamicRequire(script.Core.Immutable)
 	Compat = dynamicRequire(script.Compat)
+	Guides = dynamicRequire(script.Guides)
 else
 	-- Standalone Luau hosts resolve a directory init module relative to either
 	-- this file or the entry script. Try only local package layouts; Studio uses
@@ -119,6 +138,22 @@ else
 		end
 		error("ReactiveState could not load Compat: " .. table.concat(messages, " | "), 0)
 	end
+	local function requireGuides(): DynamicModule
+		local attempts = {
+			"./Guides",
+			"../src/Guides",
+			"./src/Guides",
+		}
+		local messages: { string } = {}
+		for _, path in ipairs(attempts) do
+			local ok, module = pcall(dynamicRequire, path)
+			if ok then
+				return module
+			end
+			messages[#messages + 1] = tostring(module)
+		end
+		error("ReactiveState could not load Guides: " .. table.concat(messages, " | "), 0)
+	end
 	FRP = requireCore("FRP")
 	Runtime = requireCore("Runtime")
 	Clock = requireCore("Clock")
@@ -126,6 +161,7 @@ else
 	Hash = requireCore("Hash")
 	Immutable = requireCore("Immutable")
 	Compat = requireCompat()
+	Guides = requireGuides()
 end
 
 export type ChangeSet = {
@@ -169,6 +205,8 @@ export type Scope = {
 FRP.VERSION = "0.2.0-rc.1"
 FRP.API_VERSION = 2
 FRP.SEMANTICS_VERSION = 1
+FRP.START_HERE = Guides.START_HERE
+FRP.Guides = Guides
 FRP.clock = Clock
 FRP.codec = Codec
 FRP.hash = Hash
@@ -188,7 +226,7 @@ end
 
 -- Capital Atom/Computed facade for game scripts that expect :Get/:Set style
 -- APIs. Prefer this over inventing a project-local ReactiveState shim.
--- Capital.Event is a local signal bus, not FRP.Event.
+-- Capital.Bus (legacy alias: Event) is a local signal bus, not FRP.Event.
 function FRP.createCapital(options)
 	return Compat.create(function(runtimeOptions)
 		return Runtime.new(runtimeOptions)
@@ -199,4 +237,4 @@ function FRP.isRuntime(value): boolean
 	return type(value) == "table" and Runtime.isRuntime(value)
 end
 
-return FRP
+return FRP :: FRPModule

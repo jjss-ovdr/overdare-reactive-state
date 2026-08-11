@@ -2,11 +2,26 @@
 
 ## 0.2.0-rc.1 - Unreleased
 
+- Added a side-effect-free, strictly typed `FRP.Guides` / `FRP.START_HERE`
+  discovery surface, a packaged agent quickstart, and manifest/root-attribute
+  guidance so installed-only Studio agents can find the canonical
+  `Network.defineFRPProtocol` + `Overdare.attachFRP*Remote` path without reading
+  implementation internals or rebuilding it with raw RemoteEvents.
 - Added `FRP.createCapital()` / `FRP.Compat` so Atom/`Get`/`Set`/`Computed`/
   `Transaction` game scripts use the official package instead of inventing a
   project-local ReactiveState shim.
-- Documented that `Capital.Event` is a local Connect/Fire bus and is not
-  `FRP.Event`, with migration tables for blank-world Studio installs.
+- Made `Capital.Bus` the canonical local Connect/Fire name while retaining
+  `Capital.Event` as a deprecated shim alias; connections now also support
+  `Disconnect`, listener delivery is ordered, and listener failures are isolated.
+- Made explicit Capital Computed dependencies real invalidation triggers and
+  documented the membership Atom required for dynamic Lua collections.
+- Added strict public Capital types and positive/negative analyzer fixtures so
+  `Get`/`Set`, Computed results, connections, and facade lifecycle no longer
+  collapse to `any` in strict Studio consumers.
+- Made Capital facades dispose their owned wrappers, subscriptions, and local
+  buses while `Compat.bind` still leaves the caller-owned Runtime alive.
+- Documented that transaction atomicity excludes Lua tables, Instance changes,
+  RemoteEvent sends, and spawned tasks, with post-commit publication guidance.
 - Restored the documented function-subscription Signal boundary by resolving
   plain Luau functions before OVERDARE's opaque canonical `Connect` namecall.
 - Added a regression that drives both the FRP clock and an input Event through

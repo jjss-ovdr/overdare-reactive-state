@@ -58,6 +58,7 @@ const expectedSourceFiles = [
 	"Core/Immutable.luau",
 	"Core/Runtime.luau",
 	"Debug/init.luau",
+	"Guides.luau",
 	"Network/init.luau",
 	"Network/EventProtocol.luau",
 	"Overdare/init.luau",
@@ -127,6 +128,7 @@ async function readMetadata(studioObjects) {
 		networkSource,
 		eventProtocolSource,
 		overdareSource,
+		guidesSource,
 	] = await Promise.all([
 		readFile(join(sourceRoot, "init.luau"), "utf8"),
 		readFile(join(sourceRoot, "Core", "Hash.luau"), "utf8"),
@@ -135,6 +137,7 @@ async function readMetadata(studioObjects) {
 		readFile(join(sourceRoot, "Network", "init.luau"), "utf8"),
 		readFile(join(sourceRoot, "Network", "EventProtocol.luau"), "utf8"),
 		readFile(join(sourceRoot, "Overdare", "init.luau"), "utf8"),
+		readFile(join(sourceRoot, "Guides.luau"), "utf8"),
 	]);
 
 	const studioRequireContracts = [
@@ -146,6 +149,7 @@ async function readMetadata(studioObjects) {
 		[rootSource, "dynamicRequire(script.Core.Hash)", "root -> Core.Hash", `${PACKAGE_NAME}/Core/Hash`],
 		[rootSource, "dynamicRequire(script.Core.Immutable)", "root -> Core.Immutable", `${PACKAGE_NAME}/Core/Immutable`],
 		[rootSource, "dynamicRequire(script.Compat)", "root -> Compat", `${PACKAGE_NAME}/Compat`],
+		[rootSource, "dynamicRequire(script.Guides)", "root -> Guides", `${PACKAGE_NAME}/Guides`],
 		[immutableSource, "dynamicRequire(script.Parent.Codec)", "Core.Immutable -> Core.Codec", `${PACKAGE_NAME}/Core/Codec`],
 		[runtimeSource, "require(script.Parent.Codec)", "Core.Runtime -> Core.Codec", `${PACKAGE_NAME}/Core/Codec`],
 		[runtimeSource, "require(script.Parent.Hash)", "Core.Runtime -> Core.Hash", `${PACKAGE_NAME}/Core/Hash`],
@@ -166,6 +170,7 @@ async function readMetadata(studioObjects) {
 	return {
 		stateVersion: parseString(rootSource, /\bVERSION\s*=\s*"([^"]+)"/, "State.VERSION"),
 		apiVersion: parseInteger(rootSource, /\bAPI_VERSION\s*=\s*(\d+)/, "State.API_VERSION"),
+		guideVersion: parseInteger(guidesSource, /\bGUIDE_VERSION\s*=\s*(\d+)/, "Guides.GUIDE_VERSION"),
 		canonicalVersion: parseInteger(
 			hashSource,
 			/\bCANONICAL_VERSION\s*=\s*(\d+)/,
@@ -327,6 +332,34 @@ function gitInfo() {
 	};
 }
 
+function buildGuidance(metadata) {
+	return {
+		formatVersion: metadata.guideVersion,
+		installedModule: `ReplicatedStorage/${PACKAGE_NAME}/Guides`,
+		rootExport: "Guides",
+		startHere: "ReactiveState.Guides.serverAuthoritativeMultiplayer",
+		artifact: "AGENT_QUICKSTART.md",
+		recommendedMultiplayerPath: [
+			"require(packageRoot.Network).defineFRPProtocol",
+			"require(packageRoot.Overdare).attachFRPServerRemote",
+			"require(packageRoot.Overdare).attachFRPClientRemote",
+		],
+	};
+}
+
+function buildRootAttributes(metadata, digest) {
+	return {
+		ReactiveStateVersion: metadata.stateVersion,
+		ReactiveStateApiVersion: metadata.apiVersion,
+		ReactiveStateCanonicalVersion: metadata.canonicalVersion,
+		ReactiveStateNetworkProtocolVersion: metadata.networkProtocolVersion,
+		ReactiveStateEventProtocolVersion: metadata.eventProtocolVersion,
+		ReactiveStatePackageSha256: digest,
+		ReactiveStateGuideVersion: metadata.guideVersion,
+		ReactiveStateStartHere: `ReplicatedStorage/${PACKAGE_NAME}/Guides`,
+	};
+}
+
 function longBracket(value) {
 	for (let equalsCount = 0; equalsCount <= 32; equalsCount += 1) {
 		const equals = "=".repeat(equalsCount);
@@ -338,7 +371,7 @@ function longBracket(value) {
 	throw new Error("Could not encode a Luau long-bracket string");
 }
 
-async function buildInstaller(objects, metadata, digest) {
+async function buildInstaller(objects, metadata, digest, rootAttributes) {
 	const sourceByPath = new Map();
 	for (const object of objects) {
 		if (object.sourcePath !== undefined) {
@@ -381,13 +414,11 @@ async function buildInstaller(objects, metadata, digest) {
 		lines.push("");
 	}
 
+	for (const [name, value] of Object.entries(rootAttributes)) {
+		lines.push(`\tcreatedRoot:SetAttribute(${JSON.stringify(name)}, ${JSON.stringify(value)})`);
+	}
+
 	lines.push(
-		`\tcreatedRoot:SetAttribute("ReactiveStateVersion", ${JSON.stringify(metadata.stateVersion)})`,
-		`\tcreatedRoot:SetAttribute("ReactiveStateApiVersion", ${metadata.apiVersion})`,
-		`\tcreatedRoot:SetAttribute("ReactiveStateCanonicalVersion", ${metadata.canonicalVersion})`,
-		`\tcreatedRoot:SetAttribute("ReactiveStateNetworkProtocolVersion", ${metadata.networkProtocolVersion})`,
-		`\tcreatedRoot:SetAttribute("ReactiveStateEventProtocolVersion", ${metadata.eventProtocolVersion})`,
-		`\tcreatedRoot:SetAttribute("ReactiveStatePackageSha256", ${JSON.stringify(digest)})`,
 		"\tcreatedRoot.Parent = ReplicatedStorage",
 		"end)",
 		"",
@@ -515,9 +546,12 @@ async function build() {
 
 	const fileRecords = await makeFileRecords(packageRoot, files);
 	const digest = packageHash(fileRecords);
-	const installer = await buildInstaller(studioObjects, metadata, digest);
+	const rootAttributes = buildRootAttributes(metadata, digest);
+	const guidance = buildGuidance(metadata);
+	const installer = await buildInstaller(studioObjects, metadata, digest, rootAttributes);
 
 	await Promise.all([
+		writeNormalizedText(join(projectRoot, "docs", "agent-quickstart.md"), join(distRoot, "AGENT_QUICKSTART.md")),
 		writeNormalizedText(join(projectRoot, "docs", "studio-install.md"), join(distRoot, "INSTALL.md")),
 		writeNormalizedText(join(projectRoot, "LICENSE"), join(distRoot, "LICENSE")),
 		writeNormalizedText(join(projectRoot, "NOTICE.md"), join(distRoot, "NOTICE.md")),
@@ -530,6 +564,7 @@ async function build() {
 
 	const artifactPaths = [
 		".reactive-state-package.json",
+		"AGENT_QUICKSTART.md",
 		"INSTALL.md",
 		"LICENSE",
 		"NOTICE.md",
@@ -551,9 +586,14 @@ async function build() {
 			canonicalVersion: metadata.canonicalVersion,
 			networkProtocolVersion: metadata.networkProtocolVersion,
 			eventProtocolVersion: metadata.eventProtocolVersion,
+			guideVersion: metadata.guideVersion,
 			artifactType: "multi-module-source-tree",
 			installRoot: `ReplicatedStorage/${PACKAGE_NAME}`,
 		},
+		install: {
+			rootAttributes,
+		},
+		guidance,
 		build: {
 			sourceRoot: "src",
 			...gitInfo(),
@@ -597,6 +637,12 @@ async function verify() {
 		manifest.package.eventProtocolVersion === metadata.eventProtocolVersion,
 		"Event protocol version is stale"
 	);
+	invariant(manifest.package.guideVersion === metadata.guideVersion, "Guide version is stale");
+	invariant(
+		JSON.stringify(manifest.install?.rootAttributes) === JSON.stringify(buildRootAttributes(metadata, manifest.build.packageSha256)),
+		"Install root attributes are stale"
+	);
+	invariant(JSON.stringify(manifest.guidance) === JSON.stringify(buildGuidance(metadata)), "Package guidance is stale");
 
 	const actualPackageFiles = await walkFiles(packageRoot);
 	invariant(arraysEqual(actualPackageFiles, files), "Packaged source file list does not match src");
@@ -619,6 +665,27 @@ async function verify() {
 		]);
 		invariant(!packageContents.includes("\r"), `Packaged file is not LF-normalized: ${file}`);
 		invariant(studioSource(file, sourceContents) === packageContents, `Packaged file is stale: ${file}`);
+	}
+
+	const expectedInstaller = await buildInstaller(
+		studioObjects,
+		metadata,
+		manifest.build.packageSha256,
+		buildRootAttributes(metadata, manifest.build.packageSha256)
+	);
+	const expectedProject = `${JSON.stringify({ name: PACKAGE_NAME, tree: { $path: PACKAGE_NAME } }, null, 2)}\n`;
+	const expectedTextArtifacts = new Map([
+		[".reactive-state-package.json", `${JSON.stringify(marker, null, 2)}\n`],
+		["AGENT_QUICKSTART.md", normalizeText(await readFile(join(projectRoot, "docs", "agent-quickstart.md"), "utf8"))],
+		["INSTALL.md", normalizeText(await readFile(join(projectRoot, "docs", "studio-install.md"), "utf8"))],
+		["LICENSE", normalizeText(await readFile(join(projectRoot, "LICENSE"), "utf8"))],
+		["NOTICE.md", normalizeText(await readFile(join(projectRoot, "NOTICE.md"), "utf8"))],
+		[`${PACKAGE_NAME}.project.json`, expectedProject],
+		["StudioInstaller.luau", expectedInstaller],
+	]);
+	for (const [artifactPath, expected] of expectedTextArtifacts) {
+		const actual = await readFile(join(distRoot, artifactPath), "utf8");
+		invariant(actual === expected, `Generated artifact is stale: ${artifactPath}`);
 	}
 
 	for (const artifact of manifest.artifacts) {

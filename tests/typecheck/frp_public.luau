@@ -4,6 +4,13 @@
 -- through the package root rather than importing internal Core types.
 local FRP = require("../../src")
 
+local startHere: string = FRP.START_HERE
+local guides: FRP.GuidesNamespace = FRP.Guides
+local multiplayerGuide: FRP.ServerAuthoritativeMultiplayerGuide = guides.serverAuthoritativeMultiplayer
+local guideRoute: FRP.GuideRoute = guides.routes.serverAuthoritativeMultiplayer
+local _: string = multiplayerGuide.protocol
+local _: string = guideRoute.entryPoint
+
 local host: FRP.Host = FRP.newHost({ startTime = 0 })
 
 local numbers, emitNumber = host:source({
@@ -132,11 +139,20 @@ host:frame(1, function(frame)
 end)
 
 local _: number = host:sample(behaviorNumber)
-local _: FRP.Event<number> = FRP.Event.fromOccurrences(host, {
+local typedOccurrences: { { time: number, value: number } } = {
 	{ time = 2, value = immutableNumber(3) },
+}
+-- The pinned analyzer cannot infer T through the mixed named/tuple input union;
+-- the public result and capture callback still pin this call to number.
+local _: FRP.Event<number> = FRP.Event.fromOccurrences(host, typedOccurrences :: any, {
+	capture = function(value: number): number
+		return value
+	end,
 })
 
 return {
+	startHere = startHere,
+	multiplayerGuide = multiplayerGuide,
 	timed = timed,
 	totals = totals,
 	rebound = rebound,

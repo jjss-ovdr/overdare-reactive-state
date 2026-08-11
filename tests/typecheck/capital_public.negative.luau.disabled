@@ -1,0 +1,21 @@
+--!strict
+
+-- Expected to fail when checked explicitly with the pinned luau-analyze.
+local FRP = require("../../src")
+
+local capital = FRP.createCapital()
+local count = capital.Atom(0)
+count:Set("not a number")
+
+local wrongValue: string = count:Get()
+local readonly = capital.Computed(function()
+	return count:Get()
+end)
+readonly:Set(2)
+
+local connection = capital.Bus():Connect(function() end)
+connection:Close()
+
+local _wrongAtom: FRP.CapitalAtom<string> = count
+
+return wrongValue

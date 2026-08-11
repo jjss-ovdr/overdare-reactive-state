@@ -12,14 +12,26 @@ Behavior<A> = Reactive<Fun<Time, A>>
 
 현재 버전은 비공개 배포 후보 `0.2.0-rc.1`, API version 2, FRP semantics version 1이다. 독립 Luau CLI gate와 이전 `dev.4`의 실제 OVERDARE Studio server + 2-client gate `90/90`을 통과했다. 이 RC artifact를 Asset Drawer에서 다시 내려받아 같은 Studio gate를 통과하기 전에는 공개 최종본으로 표시하지 않는다.
 
-## 두 가지 사용 경로
+## 사용 경로
 
 | 경로 | 언제 | 진입점 |
 |---|---|---|
 | Push-Pull FRP | 시간·occurrence·논문 의미론이 필요할 때 | `FRP.newHost()` — 아래 최소 예제 |
 | Atom 게임 상태 | 점수/라운드 같은 동기 상태 그래프 | `FRP.createStateRuntime()` 또는 shim 호환 `FRP.createCapital()` |
+| 서버 권위형 멀티플레이 | client intent와 server authority가 RemoteEvent를 건널 때 | `Network.defineFRPProtocol()` + `Overdare.attachFRP*Remote()` |
 
 blank Studio World에서는 `ReplicatedStorage/ReactiveState`에 작은 Atom shim을 직접 만들지 말고, [`docs/studio-install.md`](./docs/studio-install.md)로 공식 package tree를 설치한다. 빌드 후에는 같은 문서가 `dist/INSTALL.md`로 복사된다. Capital facade와 마이그레이션 표는 [`docs/state-runtime.md`](./docs/state-runtime.md)에 있다.
+
+설치된 Studio package만 볼 수 있는 사용자와 에이전트는 구현 소스를 검색하지 말고 내장 가이드부터 읽는다.
+
+```lua
+local packageRoot = ReplicatedStorage:WaitForChild("ReactiveState")
+local FRP = require(packageRoot)
+print(FRP.START_HERE)
+local multiplayer = FRP.Guides.serverAuthoritativeMultiplayer
+```
+
+`Guides`는 side-effect 없는 설명 데이터이며 package tree와 root export에 함께 포함된다. task-oriented 전체 흐름은 [`docs/agent-quickstart.md`](./docs/agent-quickstart.md)에 있다.
 
 ## 가장 작은 예제 (FRP)
 
@@ -66,8 +78,8 @@ Capital.Transaction(function()
 end)
 assert(health:Get() == 90)
 
--- Capital.Event is a local Connect/Fire bus, not FRP.Event.
-local bus = Capital.Event()
+-- Capital.Bus is a local Connect/Fire bus, not FRP.Event.
+local bus = Capital.Bus()
 bus:Connect(function(amount)
     print("damage", amount)
 end)
@@ -139,7 +151,7 @@ driver:dispose() -- Host는 소유하지 않으므로 살아 있다.
 
 정통 Functor/Monad 법칙을 지키기 위해 `Event.map/bind`와 `Reactive.map/bind` mapper에는 값만 전달한다. occurrence time이 도메인 로직에 필요하면 payload에 넣고, effect/sampling 경계에서는 `mapWithTime` 또는 `snapshot`을 사용한다.
 
-이전 `Atom/Computed/transaction` 구현은 마이그레이션용 `FRP.createStateRuntime()`에 남아 있으며 정통 FRP Core로 취급하지 않는다. 임시 호환 alias `FRP.create()`도 같은 State runtime을 만든다. 게임 스크립트용 `:Get`/`:Set` 표면은 `FRP.createCapital()`이며, 그 `Event`는 로컬 버스일 뿐 `FRP.Event`가 아니다.
+이전 `Atom/Computed/transaction` 구현은 마이그레이션용 `FRP.createStateRuntime()`에 남아 있으며 정통 FRP Core로 취급하지 않는다. 임시 호환 alias `FRP.create()`도 같은 State runtime을 만든다. 게임 스크립트용 `:Get`/`:Set` 표면은 `FRP.createCapital()`이며, `Capital.Bus()`는 로컬 버스일 뿐 `FRP.Event`가 아니다. `Capital.Event()`는 기존 shim을 위한 deprecated alias다.
 
 ## 설치와 검증
 
@@ -188,7 +200,7 @@ luau -O2 benchmarks/multiplayer-run.luau -a standard O2
 luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
 ```
 
-현재 자동 검증은 141개 test, 8개 Push-Pull FRP workload, 8개 multiplayer protocol workload를 포함한다. 그중 fake RemoteEvent 기반 2-client test는 격리, 권한, phase-buffered outbound binding, function signal 주입, opaque engine callable, duplicate/stale/gap, 양방향 유실·재전송, replay miss→snapshot, queue/packet limit과 disposal을 포함한다. CLI 수치는 회귀 baseline이며 실제 Studio/기기 성능을 대신하지 않는다.
+현재 자동 검증은 150개 test, 8개 Push-Pull FRP workload, 8개 multiplayer protocol workload를 포함한다. 그중 fake RemoteEvent 기반 2-client test는 격리, 권한, phase-buffered outbound binding, function signal 주입, opaque engine callable, duplicate/stale/gap, 양방향 유실·재전송, replay miss→snapshot, queue/packet limit과 disposal을 포함한다. CLI 수치는 회귀 baseline이며 실제 Studio/기기 성능을 대신하지 않는다.
 
 ## 문서
 
@@ -200,6 +212,7 @@ luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
 - [성능 전략과 결과](./docs/performance.md)
 - [멀티플레이 Network 경계](./docs/networking.md)
 - [기존 StateRuntime API](./docs/state-runtime.md)
+- [에이전트·blank World quickstart](./docs/agent-quickstart.md)
 
 ## 라이선스
 

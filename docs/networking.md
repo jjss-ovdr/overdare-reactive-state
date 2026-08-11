@@ -1,5 +1,7 @@
 # FRP 멀티플레이와 서버 권위
 
+설치된 Studio package만 있다면 `require(ReplicatedStorage.ReactiveState).Guides.serverAuthoritativeMultiplayer`에서 이 경계의 정확한 진입점과 검증 목록을 먼저 확인한다. blank World용 전체 흐름은 [`agent-quickstart.md`](./agent-quickstart.md)에 있다.
+
 멀티플레이는 부가적인 값 복제가 아니라 기본 보안 경계다. 클라이언트는 authoritative state를 보내지 않고 intent만 보낸다. 서버는 schema·순서·빈도·권한을 검증한 뒤 `Event`로 공개하고, 클라이언트에는 서버가 만든 event 또는 snapshot만 전달한다.
 
 `Network`는 engine-neutral protocol이고 연결을 만들지 않는다. 실제 OVERDARE `RemoteEvent`와 `Heartbeat` 연결은 `Overdare.attachFRPServerRemote` / `attachFRPClientRemote`를 호출할 때만 생긴다. 패킷의 로컬 도착 시각이 FRP occurrence time이며, `clientTick`과 `serverTick`은 wire metadata로 남는다.

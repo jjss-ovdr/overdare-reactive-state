@@ -10,11 +10,11 @@
 |---|---|---|
 | `ReactiveState.Atom(0)` | `local c = FRP.createCapital(); c.Atom(0)` 또는 `runtime:atom(0)` | Capital은 `:Get`/`:Set` 유지 |
 | `atom:Get()` / `atom:Set(v)` | Capital 동일, 또는 `atom:get()` / `atom:set(v)` | 공식 Runtime은 소문자 |
-| `Computed({a,b}, fn)` | `c.Computed({a,b}, fn)` 또는 `runtime:computed(fn)` | deps 배열은 무시되고 getter 중 auto-track |
-| `Computed`를 join마다 Dispose·재생성 | `runtime:computed(function() ... pairs(atoms) ... end)` | 동적 플레이어 집합도 getter 재평가로 충분 |
-| `Transaction(fn)` | `c.Transaction(fn)` / `runtime:transaction(fn)` | callback 안에서 `task.wait`/yield 금지 |
-| `ReactiveState.Event()` Connect/Fire | `c.Event()` 또는 `c.Bus()` | **로컬 신호 버스**. `FRP.Event`가 아님 |
-| 단일 ModuleScript shim 설치 | [`studio-install.md`](./studio-install.md)의 `dist/` 16+ object tree | blank World에서 공식 패키지를 설치할 것 |
+| `Computed({a,b}, fn)` | `c.Computed({a,b}, fn)` 또는 `runtime:computed(fn)` | 명시한 deps도 invalidation trigger로 추적 |
+| `Computed`를 join마다 Dispose·재생성 | player map Atom 또는 membership/version Atom을 getter에서 읽기 | 일반 Lua table의 key 추가·삭제는 reactive change가 아님 |
+| `Transaction(fn)` | `c.Transaction(fn)` / `runtime:transaction(fn)` | callback 안에서 yield와 외부 effect 금지 |
+| `ReactiveState.Event()` Connect/Fire | `c.Bus()` (`c.Event()`는 legacy alias) | **로컬 신호 버스**. `FRP.Event`가 아님 |
+| 단일 ModuleScript shim 설치 | [`studio-install.md`](./studio-install.md)의 `dist/` 18-object tree | blank World에서 공식 패키지를 설치할 것 |
 
 ## Capital facade (`:Get`/`:Set` 스타일)
 
@@ -25,7 +25,6 @@ local Capital = FRP.createCapital({ label = "CoinRaceServer" })
 local score = Capital.Atom(0)
 local remaining = Capital.Atom(10)
 local leader = Capital.Computed(function()
-    -- 플레이어 Atom이 늘어도 Dispose/재생성 없이 getter가 다시 추적한다.
     return remaining:Get()
 end)
 
@@ -34,7 +33,7 @@ Capital.Transaction(function()
     remaining:Set(remaining:Get() - 1)
 end)
 
-local pickup = Capital.Event() -- local bus only; not FRP.Event
+local pickup = Capital.Bus() -- local bus only; not FRP.Event
 pickup:Connect(function(player)
     print("pickup", player)
 end)
@@ -44,8 +43,37 @@ Capital:dispose()
 ```
 
 - `FRP.createCapital(options)`는 내부적으로 `createStateRuntime`을 만들고 facade가 Runtime을 소유한다.
-- 이미 Runtime이 있으면 `FRP.Compat.bind(runtime)`을 쓴다(dispose 시 Runtime은 유지).
-- `Capital.Event` / `Capital.Bus`는 Connect/Fire pub/sub다. 시간·occurrence가 필요하면 [`api.md`](./api.md)의 `FRP.Event`와 `Host`를 사용한다.
+- 이미 Runtime이 있으면 `FRP.Compat.bind(runtime)`을 쓴다. Facade dispose는 자신이 만든 wrapper·subscription·Bus를 닫되 외부 Runtime은 유지한다.
+- `Capital.Bus`는 등록 순서대로 listener를 실행하고, 한 listener 오류를 `onError`로 보고한 뒤 나머지 listener를 계속 실행한다. 연결은 `Dispose`와 `Disconnect`를 모두 지원한다.
+- `Capital.Event`는 기존 shim용 deprecated alias다. 시간·occurrence가 필요하면 [`api.md`](./api.md)의 `FRP.Event`와 `Host`를 사용한다.
+- 개별 Capital Atom/Computed의 `Dispose`는 wrapper subscription을 닫지만 Runtime node를 제거하지 않는다. 플레이어 churn이 큰 서버는 player map 하나를 Atom에 담거나 match/session 단위 Runtime을 종료한다.
+
+### 동적 collection
+
+Computed는 마지막 평가에서 실제로 읽은 Source만 추적한다. 일반 Lua table에 player key나 새 Atom을 넣는 행위 자체는 reactive change가 아니므로, cached Computed를 깨우지 않는다. 가장 단순한 형태는 collection 전체를 Atom 하나에 넣고 새 table로 교체하는 것이다.
+
+```lua
+local scores = Capital.Atom({})
+local leader = Capital.Computed(function()
+    local bestName = "Waiting"
+    local bestScore = -math.huge
+    for name, value in pairs(scores:Get()) do
+        if value > bestScore then
+            bestName = name
+            bestScore = value
+        end
+    end
+    return bestName
+end)
+
+scores:Update(function(previous)
+    local nextScores = table.clone(previous)
+    nextScores.Player1 = 5
+    return nextScores
+end)
+```
+
+플레이어별 Atom을 반드시 유지해야 한다면 고정 deps 배열에 `membershipRevision` Atom을 넣고 join/leave마다 증가시킨다. `Capital.Computed({ membershipRevision }, getter)`는 명시한 Source를 getter 본문이 직접 읽지 않아도 invalidation trigger로 추적한다. 배열은 생성 시 snapshot이므로 배열 자체에 항목을 추가하는 것만으로는 갱신되지 않는다.
 
 ## Runtime 만들기
 
@@ -137,9 +165,21 @@ end, {
 
 Transaction은 값과 command를 overlay에 stage한 뒤 prepare가 성공해야 publish한다. Callback, updater, reducer, validator, equality, codec 또는 watched Computed가 실패하면 Atom 값, revision, history, outbox와 watch를 변경하지 않는다.
 
+원자성 범위는 Runtime이 소유한 state/history/outbox까지다. Callback 안에서 바꾼 일반 Lua table, Instance property, RemoteEvent 송신, `task.spawn`과 `print`는 rollback할 수 없다. 외부 효과는 transaction이 성공해 반환된 뒤 실행한다.
+
+```lua
+runtime:transaction(function()
+    score:set(score:get() + 1)
+    remaining:set(remaining:get() - 1)
+end)
+
+coin.Transparency = 1
+stateRemote:FireAllClients(makeSnapshot())
+```
+
 Nested transaction은 outer transaction에 합류하는 batch이지 savepoint가 아니다. Inner 오류를 `pcall()`로 삼켜도 root는 rollback-only가 되어 실패한다. Root 호출만 `ChangeSet`을 반환하고 nested 호출과 watch 중 queued 호출은 `nil`을 반환한다. `batch`는 같은 구현의 별칭이다.
 
-모든 reactive callback은 동기식이어야 한다. `coroutine.yield()`나 비동기 continuation 전까지 transaction을 유지하는 방식은 지원하지 않는다.
+모든 reactive callback은 동기식이어야 한다. `coroutine.yield()`나 비동기 continuation 전까지 transaction을 유지하는 방식은 지원하지 않는다. 외부 효과의 실패까지 결정적으로 관리해야 하면 `step()`의 command outbox를 사용한다.
 
 ## Watch
 

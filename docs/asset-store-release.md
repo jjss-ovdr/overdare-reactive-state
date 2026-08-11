@@ -70,6 +70,7 @@ luau -O2 --codegen benchmarks/multiplayer-run.luau -a standard O2-codegen
   버전: 0.2.0-rc.1 | API: 2 | FRP semantics: 1
   라이선스: MIT, Copyright (c) 2026 ReactiveState contributors
   상태: private release candidate — 공개 게임 적용 전 자체 멀티클라이언트 검증 권장
+  시작: require(ReplicatedStorage.ReactiveState).START_HERE
   ```
 
 - 태그 제안: `Luau`, `FRP`, `Reactive`, `Multiplayer`, `RemoteEvent`, `Library`
@@ -83,9 +84,9 @@ release tag URL을 추가한다.
 업로드에 사용한 World와 설치 tree를 재사용하지 않는다.
 
 1. 새 disposable World의 Asset Drawer **Owned** 탭에서 RC를 내려받는다.
-2. `ReplicatedStorage/ReactiveState`에 root와 15개 자손 object가 정확히 복원됐는지 확인한다.
+2. `ReplicatedStorage/ReactiveState`에 root와 17개 자손 object가 정확히 복원됐는지 확인하고 `Guides` ModuleScript가 포함됐는지 확인한다.
 3. root attribute의 version, protocol version, package SHA-256을 기록한 manifest와 비교한다.
-4. Server Script와 LocalScript에서 root 및 optional module을 require한다.
+4. Server Script와 LocalScript에서 root 및 optional module을 require하고 `START_HERE` / `Guides.serverAuthoritativeMultiplayer`를 확인한다.
 5. `docs/overdare-checklist.md`를 실행한다. 특히 다음을 release evidence로 남긴다.
    - function-subscription phase/input Signal과 dispose
    - opaque `GetService`/`Connect`/`Fire*` engine callable
